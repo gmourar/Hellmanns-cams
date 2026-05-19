@@ -1,0 +1,71 @@
+# --- Segredos e ambiente local ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+ENV/
+
+# Testes / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Banco de dados (SQLite local) ---
+*.db
+*.sqlite
+*.sqlite3
+hellmanns.db
+
+# --- Vídeos e saídas de processamento ---
+videos/
+**/videos/
+processed/
+**/processed/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Mantém pastas vazias no repo (opcional: crie .gitkeep se quiser versionar a estrutura)
+!**/.gitkeep
+
+# --- Logs ---
+*.log
+logs/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Sistema operacional ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Ferramentas locais (caminho típico no Windows) ---
+ffmpeg/
+ffprobe/

@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+aiosqlite
+python-dotenv
+pydantic
