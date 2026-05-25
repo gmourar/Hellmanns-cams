@@ -116,7 +116,7 @@ export default function OperadorPage() {
       await new Promise((r) => setTimeout(r, 1000));
       try {
         const gallery = await getGallery(id);
-        if (gallery.status === "ready" && gallery.videos.length > 0 && gallery.indexing_status === "indexed") {
+        if (gallery.status === "ready" && gallery.videos.length > 0) {
           window.location.assign(`/galeria/${id}`);
           return;
         }

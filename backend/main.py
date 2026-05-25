@@ -11,9 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 
-from db import init_db, get_db, Session as SessionModel
+from db import init_db, get_db, Session as SessionModel, SessionLocal
 import command_queue as q_module
 import storage
 from indexing_service import indexar_sessao
@@ -36,7 +36,44 @@ ALLOWED_ORIGINS = [
 async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
+    await _recover_pending_sessions()
     yield
+
+
+async def _recover_pending_sessions():
+    """
+    Recupera sessões com estado inconsistente após crash/restart:
+    - status='recording' → reenfileira o RECORD (agente nunca recebeu)
+    - indexing_status='indexing' ou status='ready'+pending → relança indexação
+    """
+    import asyncio as _asyncio
+    async with SessionLocal() as db:
+        result = await db.execute(
+            select(SessionModel).where(
+                or_(
+                    SessionModel.status == "recording",
+                    SessionModel.indexing_status == "indexing",
+                    and_(
+                        SessionModel.status == "ready",
+                        SessionModel.indexing_status == "pending",
+                    ),
+                )
+            )
+        )
+        sessions = result.scalars().all()
+
+    for session in sessions:
+        if session.status == "recording":
+            logger.warning("Recuperando sessão %s em 'recording' — reenfileirando RECORD", session.session_id)
+            await q_module.push({"type": "RECORD", "session_id": session.session_id})
+        elif session.status == "ready" and session.indexing_status in ("indexing", "pending"):
+            logger.warning("Relançando indexação interrompida da sessão %s", session.session_id)
+            _asyncio.create_task(indexar_sessao(session.session_id))
+
+    if sessions:
+        logger.info("Recuperação: %d sessão(ões) reprocessada(s)", len(sessions))
+    else:
+        logger.info("Nenhuma sessão pendente para recuperar")
 
 
 app = FastAPI(title="Hellmann's Cam Backend", lifespan=lifespan)

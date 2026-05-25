@@ -66,7 +66,11 @@ def public_url(session_id: str, cabine_id: int) -> str:
         if S3_PRESIGN_URLS:
             return _s3().generate_presigned_url(
                 "get_object",
-                Params={"Bucket": S3_BUCKET, "Key": key},
+                Params={
+                    "Bucket": S3_BUCKET,
+                    "Key": key,
+                    "ResponseContentDisposition": f"attachment; filename=bazuca-cabine-{cabine_id}.mp4",
+                },
                 ExpiresIn=S3_URL_EXPIRES_SECONDS,
             )
         if S3_PUBLIC_URL:
