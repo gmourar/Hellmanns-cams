@@ -65,7 +65,7 @@ export async function getSessions(): Promise<SessionSummary[]> {
   return r.json();
 }
 
-export async function buscarVideo(imagemBase64: string): Promise<BuscarVideoResponse> {
+export async function buscarVideo(imagemBase64: string): Promise<BuscarVideoResponse[]> {
   const r = await fetch(`${API_BASE}/buscar-video`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

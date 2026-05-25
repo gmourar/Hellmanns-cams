@@ -11,7 +11,7 @@ export default function MeuVideoPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [phase, setPhase] = useState<Phase>("camera");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<BuscarVideoResponse | null>(null);
+  const [results, setResults] = useState<BuscarVideoResponse[]>([]);
   const [camError, setCamError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export default function MeuVideoPage() {
 
     try {
       const data = await buscarVideo(base64);
-      setResult(data);
+      setResults(data);
       setPhase("result");
       // Para a câmera para economizar bateria
       (videoRef.current?.srcObject as MediaStream)?.getTracks().forEach((t) => t.stop());
@@ -73,7 +73,7 @@ export default function MeuVideoPage() {
   function resetar() {
     setPhase("camera");
     setError(null);
-    setResult(null);
+    setResults([]);
     // Reinicia câmera
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } }).then((stream) => {
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -174,46 +174,54 @@ export default function MeuVideoPage() {
         )}
 
         {/* RESULT */}
-        {phase === "result" && result && (
+        {phase === "result" && results.length > 0 && (
           <div className="w-full max-w-sm space-y-5">
             <div className="text-center space-y-1">
               <span className="inline-flex items-center gap-2 bg-[#FFD200]/10 border border-[#FFD200]/25 text-[#FFD200] font-display text-xs tracking-[0.25em] px-4 py-1.5 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FFD200]" />
-                VÍDEO ENCONTRADO
+                {results.length === 1 ? "VÍDEO ENCONTRADO" : `${results.length} VÍDEOS ENCONTRADOS`}
               </span>
               <h2 className="font-display text-[2.2rem] tracking-wider text-white leading-[0.95] pt-1">
                 ESSE É O<br /><span className="text-[#FFD200]">SEU MOMENTO</span>
               </h2>
             </div>
 
-            {/* Player */}
-            <div className="relative w-full rounded-3xl overflow-hidden border border-white/10 bg-black"
-              style={{ paddingBottom: "177.78%" }}>
-              <video
-                src={result.video_url}
-                controls
-                playsInline
-                autoPlay
-                className="absolute inset-0 w-full h-full object-contain"
-              />
-            </div>
-
-            {/* Download */}
-            <a
-              href={result.video_url}
-              download="meu-video-bazuca.mp4"
-              className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A]
-                         font-display text-[1.6rem] tracking-[0.15em] py-5 rounded-2xl
-                         hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase
-                         shadow-[0_0_40px_rgba(255,210,0,0.3)]"
-            >
-              BAIXAR VÍDEO
-              <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 flex-shrink-0" aria-hidden>
-                <path fillRule="evenodd"
-                  d="M10 3a.75.75 0 01.75.75v7.69l2.47-2.47a.75.75 0 111.06 1.06l-3.75 3.75a.75.75 0 01-1.06 0L5.72 10.03a.75.75 0 111.06-1.06L9.25 11.44V3.75A.75.75 0 0110 3zm-6.5 13a.75.75 0 000 1.5h13a.75.75 0 000-1.5h-13z"
-                  clipRule="evenodd" />
-              </svg>
-            </a>
+            {results.map((result, i) => (
+              <div key={`${result.session_id}-${result.cabine_id}`} className="space-y-3">
+                {results.length > 1 && (
+                  <p className="text-white/40 font-display text-sm tracking-widest text-center uppercase">
+                    Cabine {result.cabine_id}
+                  </p>
+                )}
+                {/* Player */}
+                <div className="relative w-full rounded-3xl overflow-hidden border border-white/10 bg-black"
+                  style={{ paddingBottom: "177.78%" }}>
+                  <video
+                    src={result.video_url}
+                    controls
+                    playsInline
+                    autoPlay={i === 0}
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
+                </div>
+                {/* Download */}
+                <a
+                  href={result.video_url}
+                  download={`bazuca-cabine${result.cabine_id}.mp4`}
+                  className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A]
+                             font-display text-[1.6rem] tracking-[0.15em] py-5 rounded-2xl
+                             hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase
+                             shadow-[0_0_40px_rgba(255,210,0,0.3)]"
+                >
+                  BAIXAR VÍDEO {results.length > 1 ? result.cabine_id : ""}
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 flex-shrink-0" aria-hidden>
+                    <path fillRule="evenodd"
+                      d="M10 3a.75.75 0 01.75.75v7.69l2.47-2.47a.75.75 0 111.06 1.06l-3.75 3.75a.75.75 0 01-1.06 0L5.72 10.03a.75.75 0 111.06-1.06L9.25 11.44V3.75A.75.75 0 0110 3zm-6.5 13a.75.75 0 000 1.5h13a.75.75 0 000-1.5h-13z"
+                      clipRule="evenodd" />
+                  </svg>
+                </a>
+              </div>
+            ))}
 
             <button onClick={resetar}
               className="w-full py-4 rounded-2xl border border-white/10 text-white/40 font-body text-sm

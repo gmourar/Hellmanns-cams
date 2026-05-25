@@ -282,28 +282,33 @@ async def buscar_video(body: BuscarVideoRequest):
     if not matches:
         raise HTTPException(status_code=404, detail="Rosto não encontrado. Tente novamente.")
 
-    # Pega o match com maior similaridade
-    best = max(matches, key=lambda m: m["similarity"])
-    external_id = best["external_image_id"]
+    # Deduplica por external_image_id (vários frames da mesma cabine podem dar match)
+    seen: set[str] = set()
+    results = []
+    for match in sorted(matches, key=lambda m: m["similarity"], reverse=True):
+        external_id = match["external_image_id"]
+        if external_id in seen:
+            continue
+        seen.add(external_id)
+        try:
+            parts = external_id.split("_c")
+            session_id = parts[0]
+            cabine_id = int(parts[1])
+        except (IndexError, ValueError):
+            continue
+        if not storage.video_exists(session_id, cabine_id):
+            continue
+        results.append({
+            "session_id": session_id,
+            "cabine_id": cabine_id,
+            "video_url": storage.public_url(session_id, cabine_id),
+            "similarity": match["similarity"],
+        })
 
-    # Parseia session_id e cabine_id do external_image_id (formato: {session_id}_c{cabine_id})
-    try:
-        parts = external_id.split("_c")
-        session_id = parts[0]
-        cabine_id = int(parts[1])
-    except (IndexError, ValueError):
-        raise HTTPException(status_code=500, detail="Formato de ID inválido")
-
-    if not storage.video_exists(session_id, cabine_id):
+    if not results:
         raise HTTPException(status_code=404, detail="Vídeo não encontrado no storage")
 
-    video_url = storage.public_url(session_id, cabine_id)
-    return {
-        "session_id": session_id,
-        "cabine_id": cabine_id,
-        "video_url": video_url,
-        "similarity": best["similarity"],
-    }
+    return results
 
 
 # ── List all sessions ─────────────────────────────────────────────────────────
