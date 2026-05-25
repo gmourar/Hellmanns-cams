@@ -50,6 +50,21 @@ export interface BuscarVideoResponse {
   similarity: number;
 }
 
+export interface SessionSummary {
+  session_id: string;
+  operator_name: string;
+  participants: string[];
+  created_at: string;
+  indexing_status: string;
+  videos: GalleryVideo[];
+}
+
+export async function getSessions(): Promise<SessionSummary[]> {
+  const r = await fetch(`${API_BASE}/sessions`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`getSessions falhou: ${r.status}`);
+  return r.json();
+}
+
 export async function buscarVideo(imagemBase64: string): Promise<BuscarVideoResponse> {
   const r = await fetch(`${API_BASE}/buscar-video`, {
     method: "POST",

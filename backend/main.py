@@ -306,6 +306,39 @@ async def buscar_video(body: BuscarVideoRequest):
     }
 
 
+# ── List all sessions ─────────────────────────────────────────────────────────
+
+@app.get("/sessions")
+async def list_sessions(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(SessionModel)
+        .where(SessionModel.status == "ready")
+        .order_by(SessionModel.created_at.desc())
+    )
+    sessions = result.scalars().all()
+
+    response = []
+    for session in sessions:
+        videos = [
+            {
+                "cabine_id": cabine_id,
+                "video_url": storage.public_url(session.session_id, cabine_id),
+                "qr_url": f"{storage.BASE_URL}/gallery/{session.session_id}/cabines/{cabine_id}/qr.svg",
+            }
+            for cabine_id in storage.available_cabine_ids(session.session_id)
+        ]
+        response.append({
+            "session_id": session.session_id,
+            "operator_name": session.operator_name,
+            "participants": session.participants_list,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "indexing_status": session.indexing_status or "pending",
+            "videos": videos,
+        })
+
+    return response
+
+
 # ── Video file serving ────────────────────────────────────────────────────────
 
 @app.get("/videos/{session_id}/{filename}")
