@@ -126,6 +126,39 @@ def _read_serial(sdk, cam_ref) -> str:
     return buf.value.decode("ascii", errors="replace").strip("\x00")
 
 
+def list_connected_cameras(sdk) -> list[tuple[str, str]]:
+    """Returns (name, serial) for every camera reachable via USB."""
+    camera_list_ref = EdsBaseRef()
+    err = sdk.EdsGetCameraList(ctypes.byref(camera_list_ref))
+    if err != EDS_ERR_OK:
+        raise RuntimeError(f"EdsGetCameraList failed: 0x{err:08X}")
+
+    count = ctypes.c_int32(0)
+    sdk.EdsGetChildCount(camera_list_ref, ctypes.byref(count))
+
+    found: list[tuple[str, str]] = []
+    for i in range(count.value):
+        cam_ref = EdsBaseRef()
+        sdk.EdsGetChildAtIndex(camera_list_ref, i, ctypes.byref(cam_ref))
+
+        info = EdsDeviceInfo()
+        sdk.EdsGetDeviceInfo(cam_ref, ctypes.byref(info))
+        name = info.szDeviceDescription.decode("ascii", errors="replace")
+
+        if not _open_session_with_retry(sdk, cam_ref):
+            logger.error("Could not open session for camera %d (%s)", i, name)
+            sdk.EdsRelease(cam_ref)
+            continue
+
+        serial = _read_serial(sdk, cam_ref)
+        sdk.EdsCloseSession(cam_ref)
+        sdk.EdsRelease(cam_ref)
+        found.append((name, serial))
+
+    sdk.EdsRelease(camera_list_ref)
+    return found
+
+
 def detect_cameras(sdk, serial_to_cabine: dict) -> list:
     """Returns list of (Camera, cam_ref) tuples for cameras whose serial is mapped."""
     camera_list_ref = EdsBaseRef()
@@ -265,7 +298,15 @@ def _find_new_video(sdk, cam_ref, known_files: set):
     return None, None, None
 
 
-def record_one_camera(sdk, cam_ref, camera: Camera, duration_s: float, dest_dir: Path) -> Path:
+def record_one_camera(
+    sdk,
+    cam_ref,
+    camera: Camera,
+    duration_s: float,
+    dest_dir: Path,
+    prep_delay: float = 0.0,
+    start_settle: float = 0.0,
+) -> Path:
     """
     Blocking. Runs in a thread. Returns path to downloaded raw video.
     Raises on unrecoverable error.
@@ -290,6 +331,13 @@ def record_one_camera(sdk, cam_ref, camera: Camera, duration_s: float, dest_dir:
         # Snapshot existing SD files
         known_files = _snapshot_sd_files(sdk, cam_ref)
 
+        if prep_delay > 0:
+            logger.info(
+                "cabine %d: aguardando %.1fs antes de iniciar gravação",
+                camera.cabine_id, prep_delay,
+            )
+            time.sleep(prep_delay)
+
         # Start recording
         val_begin = ctypes.c_uint32(RECORD_BEGIN)
         err = sdk.EdsSetPropertyData(cam_ref, kEdsPropID_Record, 0, 4, ctypes.byref(val_begin))
@@ -297,6 +345,14 @@ def record_one_camera(sdk, cam_ref, camera: Camera, duration_s: float, dest_dir:
             raise RuntimeError(f"cabine {camera.cabine_id}: Record=4 failed 0x{err:08X}")
         logger.info("Gravação iniciada: cabine %d", camera.cabine_id)
 
+        if start_settle > 0:
+            logger.info(
+                "cabine %d: aguardando %.1fs para câmera entrar em modo vídeo",
+                camera.cabine_id, start_settle,
+            )
+            time.sleep(start_settle)
+
+        logger.info("cabine %d: gravando %.1fs", camera.cabine_id, duration_s)
         time.sleep(duration_s)
 
         # Stop recording with retry
@@ -347,7 +403,14 @@ def record_one_camera(sdk, cam_ref, camera: Camera, duration_s: float, dest_dir:
         sdk.EdsCloseSession(cam_ref)
 
 
-async def record_all_cameras(cameras: list, duration_s: float, dest_dir: Path) -> dict:
+async def record_all_cameras(
+    sdk,
+    cameras: list,
+    duration_s: float,
+    dest_dir: Path,
+    prep_delay: float = 0.0,
+    start_settle: float = 0.0,
+) -> dict:
     """
     Runs record_one_camera for each camera in parallel threads.
     Returns dict {cabine_id: Path | Exception}.
@@ -356,7 +419,10 @@ async def record_all_cameras(cameras: list, duration_s: float, dest_dir: Path) -
 
     async def _one(sdk, cam_ref, cam):
         try:
-            path = await asyncio.to_thread(record_one_camera, sdk, cam_ref, cam, duration_s, dest_dir)
+            path = await asyncio.to_thread(
+                record_one_camera, sdk, cam_ref, cam, duration_s, dest_dir,
+                prep_delay, start_settle,
+            )
             return cam.cabine_id, path
         except Exception as exc:
             logger.error("cabine %d failed: %s", cam.cabine_id, exc)

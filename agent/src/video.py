@@ -1,7 +1,15 @@
-import asyncio, logging, subprocess
+import asyncio, logging, os, subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Saída vertical 9:16 (câmera montada em retrato)
+OUTPUT_WIDTH = int(os.environ.get("OUTPUT_WIDTH", "1080"))
+OUTPUT_HEIGHT = int(os.environ.get("OUTPUT_HEIGHT", "1920"))
+# FFmpeg transpose: 1 = 90° horário, 2 = 90° anti-horário (ajuste se a imagem ficar de cabeça)
+VIDEO_TRANSPOSE = os.environ.get("VIDEO_TRANSPOSE", "1").strip()
+FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
+FFMPEG_CRF = os.environ.get("FFMPEG_CRF", "24")
 
 
 def get_duration(path: Path) -> float:
@@ -16,51 +24,67 @@ def get_duration(path: Path) -> float:
     return float(out)
 
 
+def _atempo_chain(speed: float) -> str:
+    """Build an atempo filter chain for the target playback speed.
+
+    atempo range starts at 0.5, so very slow speeds need multiple stages:
+    0.25x speed -> atempo=0.5,atempo=0.5.
+    """
+    stages: list[str] = []
+    while speed < 0.5 - 1e-9:
+        stages.append("atempo=0.5")
+        speed /= 0.5
+    stages.append(f"atempo={speed:.6f}")
+    return ",".join(stages)
+
+
+def _portrait_filter() -> str:
+    """Rotate landscape raw to portrait 9:16 and scale/crop to target resolution."""
+    w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
+    if VIDEO_TRANSPOSE and VIDEO_TRANSPOSE.lower() not in ("0", "none", "off"):
+        rotated = f"transpose={VIDEO_TRANSPOSE},"
+    else:
+        rotated = ""
+    return (
+        f"{rotated}"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h}"
+    )
+
+
 async def process_video(
     raw_video: Path,
-    frame_png: Path,
     output: Path,
     ffmpeg_path: str = "ffmpeg",
-    slowmo_factor: float = 4.0,
+    video_speed: float = 0.75,
 ) -> Path:
     """
     Async wrapper around FFmpeg pipeline:
-    - Split video in 3 thirds
-    - Apply slowmo (4x) to middle third
-    - Transpose (rotate 90° clockwise, portrait output)
-    - Overlay frame PNG
+    - Apply playback speed to the full clip
+    - Transpose (rotate 90° for vertical mount) + crop to 9:16
     - Encode H.264 + AAC
     Returns output path.
     """
     output.parent.mkdir(parents=True, exist_ok=True)
+    if video_speed <= 0:
+        raise ValueError("video_speed must be greater than zero")
 
-    duration = await asyncio.to_thread(get_duration, raw_video)
-    t1 = duration / 3
-    t2 = 2 * duration / 3
-    f  = slowmo_factor
+    atempo = _atempo_chain(video_speed)
+    pts_multiplier = 1.0 / video_speed
+    portrait = _portrait_filter()
+    w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
 
     filter_complex = (
-        f"[0:v]split=3[va][vb][vc];"
-        f"[va]trim=0:{t1:.6f},setpts=PTS-STARTPTS[s1];"
-        f"[vb]trim={t1:.6f}:{t2:.6f},setpts={f:.4f}*(PTS-STARTPTS)[s2];"
-        f"[vc]trim={t2:.6f}:{duration:.6f},setpts=PTS-STARTPTS[s3];"
-        f"[s1][s2][s3]concat=n=3:v=1:a=0[joined];"
-        f"[joined]transpose=1,scale=1080:1920[geo];"
-        f"[geo][1:v]overlay=0:0[outv];"
-        f"[0:a]asplit=3[aa][ab][ac];"
-        f"[aa]atrim=0:{t1:.6f},asetpts=PTS-STARTPTS[sa1];"
-        f"[ab]atrim={t1:.6f}:{t2:.6f},asetpts=PTS-STARTPTS,atempo=0.25[sa2];"
-        f"[ac]atrim={t2:.6f}:{duration:.6f},asetpts=PTS-STARTPTS[sa3];"
-        f"[sa1][sa2][sa3]concat=n=3:v=0:a=1[outa]"
+        f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{portrait}[outv];"
+        f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
     )
 
     cmd = [
         ffmpeg_path, "-y", "-noautorotate",
         "-i", str(raw_video),
-        "-i", str(frame_png),
         "-filter_complex", filter_complex,
         "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         str(output),

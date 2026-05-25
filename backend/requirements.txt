@@ -4,3 +4,5 @@ sqlalchemy[asyncio]
 aiosqlite
 python-dotenv
 pydantic
+boto3
+qrcode
