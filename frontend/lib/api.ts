@@ -13,6 +13,7 @@ export interface GallerySession {
   videos: GalleryVideo[];
   video_urls: string[];
   status: "recording" | "ready" | "error";
+  indexing_status: "pending" | "indexing" | "indexed" | "error";
   created_at: string;
 }
 
@@ -39,5 +40,23 @@ export async function getGallery(sessionId: string): Promise<GallerySession> {
   const r = await fetch(`${API_BASE}/gallery/${sessionId}`, { cache: "no-store" });
   if (r.status === 404) throw new Error("Sessão ainda processando ou inexistente");
   if (!r.ok) throw new Error(`getGallery falhou: ${r.status}`);
+  return r.json();
+}
+
+export interface BuscarVideoResponse {
+  session_id: string;
+  cabine_id: number;
+  video_url: string;
+  similarity: number;
+}
+
+export async function buscarVideo(imagemBase64: string): Promise<BuscarVideoResponse> {
+  const r = await fetch(`${API_BASE}/buscar-video`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imagem_base64: imagemBase64 }),
+  });
+  if (r.status === 404) throw new Error("Rosto não encontrado. Tente novamente em instantes.");
+  if (!r.ok) throw new Error(`Erro ao buscar vídeo: ${r.status}`);
   return r.json();
 }

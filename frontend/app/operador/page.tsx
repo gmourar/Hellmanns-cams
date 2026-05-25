@@ -116,7 +116,7 @@ export default function OperadorPage() {
       await new Promise((r) => setTimeout(r, 1000));
       try {
         const gallery = await getGallery(id);
-        if (gallery.status === "ready" && gallery.videos.length > 0) {
+        if (gallery.status === "ready" && gallery.videos.length > 0 && gallery.indexing_status === "indexed") {
           window.location.assign(`/galeria/${id}`);
           return;
         }
@@ -386,7 +386,7 @@ export default function OperadorPage() {
           </div>
 
           <div className="w-full max-w-xs space-y-3">
-            {["Preparando o vídeo", "Aplicando velocidade 0.60x", "Subindo para a cloud", "Abrindo galeria"].map((step, i) => (
+            {["Preparando o vídeo", "Aplicando velocidade 0.60x", "Subindo para a cloud", "Indexando rostos", "Pronto!"].map((step, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className="w-5 h-5 rounded-full border border-[#FFD200]/30 bg-[#FFD200]/10 flex items-center justify-center flex-shrink-0">
                   <div className="w-1.5 h-1.5 rounded-full bg-[#FFD200]/60" />

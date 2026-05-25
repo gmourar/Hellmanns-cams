@@ -1,4 +1,4 @@
-import io, json, os, uuid, logging
+import base64, io, json, os, uuid, logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -16,6 +16,8 @@ from sqlalchemy import select
 from db import init_db, get_db, Session as SessionModel
 import command_queue as q_module
 import storage
+from indexing_service import indexar_sessao
+from rekognition_service import RekognitionService, COLLECTION_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -73,6 +75,17 @@ class GalleryVideo(BaseModel):
     qr_url: str
 
 
+class BuscarVideoRequest(BaseModel):
+    imagem_base64: str  # JPEG/PNG em base64
+
+
+class BuscarVideoResponse(BaseModel):
+    session_id: str
+    cabine_id: int
+    video_url: str
+    similarity: float
+
+
 # ── Operator endpoints ────────────────────────────────────────────────────────
 
 @app.post("/operator/sessions", status_code=201)
@@ -110,6 +123,7 @@ async def agent_poll(_=Depends(verify_agent)):
 async def agent_complete(
     session_id: str,
     body: CompleteSessionRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_agent),
 ):
@@ -122,11 +136,13 @@ async def agent_complete(
 
     if body.status == "ok":
         session.status = "ready"
+        await db.commit()
+        background_tasks.add_task(indexar_sessao, session_id)
     else:
         session.status = "error"
         logger.error("Session %s error: %s", session_id, body.detail)
+        await db.commit()
 
-    await db.commit()
     logger.info("Session %s → %s", session_id, session.status)
     return {"ok": True}
 
@@ -158,6 +174,7 @@ async def gallery(session_id: str, db: AsyncSession = Depends(get_db)):
         "videos": videos,
         "video_urls": [video.video_url for video in videos],
         "status": session.status,
+        "indexing_status": session.indexing_status or "pending",
         "created_at": session.created_at.isoformat() if session.created_at else None,
     }
 
@@ -190,6 +207,66 @@ async def cabine_qr(session_id: str, cabine_id: int, db: AsyncSession = Depends(
         media_type="image/svg+xml",
         headers={"Cache-Control": "public, max-age=300"},
     )
+
+
+# ── QR genérico do evento ─────────────────────────────────────────────────────
+
+@app.get("/meu-video/qr.svg")
+async def meu_video_qr():
+    import qrcode
+    import qrcode.image.svg
+    frontend_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
+    url = f"{frontend_url}/meu-video"
+    qr = qrcode.QRCode(border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+    buffer = io.BytesIO()
+    image.save(buffer)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+# ── Buscar vídeo por reconhecimento facial ────────────────────────────────────
+
+@app.post("/buscar-video")
+async def buscar_video(body: BuscarVideoRequest):
+    try:
+        image_bytes = base64.b64decode(body.imagem_base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="imagem_base64 inválida")
+
+    rekognition = RekognitionService()
+    matches = rekognition.buscar_rosto(image_bytes, COLLECTION_ID)
+
+    if not matches:
+        raise HTTPException(status_code=404, detail="Rosto não encontrado. Tente novamente.")
+
+    # Pega o match com maior similaridade
+    best = max(matches, key=lambda m: m["similarity"])
+    external_id = best["external_image_id"]
+
+    # Parseia session_id e cabine_id do external_image_id (formato: {session_id}_c{cabine_id})
+    try:
+        parts = external_id.split("_c")
+        session_id = parts[0]
+        cabine_id = int(parts[1])
+    except (IndexError, ValueError):
+        raise HTTPException(status_code=500, detail="Formato de ID inválido")
+
+    if not storage.video_exists(session_id, cabine_id):
+        raise HTTPException(status_code=404, detail="Vídeo não encontrado no storage")
+
+    video_url = storage.public_url(session_id, cabine_id)
+    return {
+        "session_id": session_id,
+        "cabine_id": cabine_id,
+        "video_url": video_url,
+        "similarity": best["similarity"],
+    }
 
 
 # ── Video file serving ────────────────────────────────────────────────────────

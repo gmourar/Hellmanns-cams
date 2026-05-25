@@ -6,3 +6,5 @@ python-dotenv
 pydantic
 boto3
 qrcode
+Pillow
+httpx

@@ -116,6 +116,25 @@ export default async function GaleriaPage({
             NOVA SESSÃO
           </a>
         </div>
+
+        {/* QR Genérico — aponta para /meu-video */}
+        <div className="flex flex-col items-center gap-4 mt-6 p-5 rounded-3xl bg-white/[0.04] border border-white/10">
+          <p className="font-display text-[#FFD200] text-lg tracking-wider leading-none text-center">
+            ESCANEIE PARA VER SEU VÍDEO
+          </p>
+          <p className="text-white/35 text-xs font-body text-center max-w-[200px]">
+            Abra a câmera frontal e encontre seu vídeo pelo rosto
+          </p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`${process.env.NEXT_PUBLIC_API_BASE}/meu-video/qr.svg`}
+            alt="QR Code para encontrar seu vídeo"
+            className="w-44 h-44 bg-white rounded-2xl p-3"
+          />
+          <span className="text-white/20 text-[10px] font-body uppercase tracking-widest">
+            {session.indexing_status === "indexed" ? "✓ pronto para escanear" : "processando..."}
+          </span>
+        </div>
       </header>
 
       {/* ── VÍDEOS ───────────────────────────────────────────────────────────── */}
