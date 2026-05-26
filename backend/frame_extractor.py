@@ -14,7 +14,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
-FRAME_TIMESTAMPS = [1.5, 3.5]  # segundos — para vídeos de ~5s
+FRAME_TIMESTAMPS = [0.5, 1.5, 2.5, 3.5, 4.5]  # 5 frames ao longo do vídeo
 
 
 async def extrair_frames(video_source: str | Path) -> list[bytes]:

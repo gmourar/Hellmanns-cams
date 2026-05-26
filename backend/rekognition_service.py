@@ -91,7 +91,7 @@ class RekognitionService:
         self,
         image_bytes: bytes,
         collection_id: str = COLLECTION_ID,
-        threshold: float = 55.0,
+        threshold: float = 40.0,
         max_faces: int = 10,
     ) -> list[dict]:
         """
