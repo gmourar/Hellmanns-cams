@@ -124,7 +124,7 @@ class RekognitionService:
                 })
             if matches:
                 logger.info("Busca facial: %d match(es) — melhor: %s (%.1f%%)",
-                    len(matches), matches[0]["external_image_id"], matches[0]["Similarity"])
+                    len(matches), matches[0]["external_image_id"], matches[0]["similarity"])
             else:
                 logger.info("Busca facial: nenhum match acima de %.0f%%", threshold)
             return matches
