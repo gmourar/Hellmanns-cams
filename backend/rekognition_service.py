@@ -91,8 +91,8 @@ class RekognitionService:
         self,
         image_bytes: bytes,
         collection_id: str = COLLECTION_ID,
-        threshold: float = 70.0,
-        max_faces: int = 5,
+        threshold: float = 55.0,
+        max_faces: int = 10,
     ) -> list[dict]:
         """
         Busca rostos na collection.
@@ -122,6 +122,11 @@ class RekognitionService:
                     "similarity": match["Similarity"],
                     "face_id": match["Face"]["FaceId"],
                 })
+            if matches:
+                logger.info("Busca facial: %d match(es) — melhor: %s (%.1f%%)",
+                    len(matches), matches[0]["external_image_id"], matches[0]["Similarity"])
+            else:
+                logger.info("Busca facial: nenhum match acima de %.0f%%", threshold)
             return matches
         except Exception as e:
             logger.error("Erro na busca facial: %s", e)
