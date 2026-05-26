@@ -1,16 +1,30 @@
 import Image from "next/image";
-import { getSessions } from "@/lib/api";
+import { getSessions, SessionSummary, GalleryVideo } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
+interface VideoEntry {
+  session: SessionSummary;
+  video: GalleryVideo;
+}
+
 export default async function GaleriaIndexPage() {
-  let sessions: Awaited<ReturnType<typeof getSessions>> = [];
+  let sessions: SessionSummary[] = [];
   try {
     sessions = await getSessions();
   } catch {
     // mostra lista vazia em caso de erro
   }
 
+  // Agrupa vídeos por cabine_id
+  const byCabine = new Map<number, VideoEntry[]>();
+  for (const session of sessions) {
+    for (const video of session.videos) {
+      if (!byCabine.has(video.cabine_id)) byCabine.set(video.cabine_id, []);
+      byCabine.get(video.cabine_id)!.push({ session, video });
+    }
+  }
+  const cabines = Array.from(byCabine.entries()).sort(([a], [b]) => a - b);
   const totalVideos = sessions.reduce((acc, s) => acc + s.videos.length, 0);
 
   return (
@@ -47,9 +61,21 @@ export default async function GaleriaIndexPage() {
           <h1 className="font-display text-[3.6rem] leading-[0.85] tracking-wider text-white">DE BOLINHAS</h1>
         </div>
 
-        <p className="text-white/40 text-sm mb-2">
-          {sessions.length} sessão(ões) · {totalVideos} vídeo(s)
+        <p className="text-white/40 text-sm mb-6">
+          {cabines.length} cabine(s) · {totalVideos} vídeo(s)
         </p>
+
+        {/* Navegação por cabine */}
+        {cabines.length > 1 && (
+          <div className="flex justify-center gap-3 flex-wrap mb-2">
+            {cabines.map(([cabineId]) => (
+              <a key={cabineId} href={`#cabine-${cabineId}`}
+                className="font-display text-sm tracking-widest bg-[#FFD200]/10 border border-[#FFD200]/30 text-[#FFD200] px-5 py-2 rounded-full hover:bg-[#FFD200]/20 transition-colors">
+                CABINE {cabineId}
+              </a>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 mt-6 mb-5 px-2">
           <div className="h-px flex-1 bg-gradient-to-r from-transparent to-[#FFD200]/40" />
@@ -58,64 +84,52 @@ export default async function GaleriaIndexPage() {
         </div>
       </header>
 
-      {/* ── SESSÕES ── */}
-      <main className="relative z-10 px-4 pb-12 max-w-[1500px] mx-auto space-y-10">
+      {/* ── CABINES ── */}
+      <main className="relative z-10 px-4 pb-12 max-w-[1500px] mx-auto space-y-14">
         {sessions.length === 0 && (
           <div className="text-center py-20">
             <p className="text-white/30 font-body text-sm">Nenhuma sessão finalizada ainda.</p>
           </div>
         )}
 
-        {sessions.map((session) => {
-          const date = new Date(session.created_at).toLocaleString("pt-BR", {
-            day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-          });
-
-          return (
-            <section key={session.session_id}>
-              {/* cabeçalho da sessão */}
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-4 px-1">
-                <div>
-                  <span className="font-display text-[#FFD200] tracking-widest text-lg">{session.session_id.toUpperCase()}</span>
-                  <span className="ml-3 text-white/30 text-xs">{date}</span>
-                  {session.indexing_status !== "indexed" && (
-                    <span className="ml-2 text-yellow-400 text-xs">· indexando...</span>
-                  )}
-                </div>
-                {session.participants.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {session.participants.map((name, i) => (
-                      <span key={i} className="text-[#FFD200] font-display tracking-wider text-sm bg-[#FFD200]/10 border border-[#FFD200]/20 px-3 py-1 rounded-full">
-                        {name.toUpperCase()}
-                      </span>
-                    ))}
-                  </div>
-                )}
+        {cabines.map(([cabineId, entries]) => (
+          <section key={cabineId} id={`cabine-${cabineId}`}>
+            {/* cabeçalho da cabine */}
+            <div className="flex items-center gap-4 mb-6">
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#E8003D] opacity-50" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[#E8003D]" />
+                </span>
+                <h2 className="font-display text-[#FFD200] tracking-[0.3em] text-2xl">CABINE {cabineId}</h2>
               </div>
+              <span className="text-white/25 text-sm">{entries.length} vídeo(s)</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
 
-              {/* vídeos da sessão */}
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {session.videos.map((video) => (
+            {/* grid de vídeos da cabine */}
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
+              {entries.map(({ session, video }) => {
+                const participantName = session.participants[cabineId - 1];
+                const date = new Date(session.created_at).toLocaleString("pt-BR", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                });
+
+                return (
                   <article key={`${session.session_id}-${video.cabine_id}`}
                     className="rounded-3xl overflow-hidden bg-white/[0.04] border border-white/10 shadow-[0_12px_64px_rgba(0,0,0,0.7)]"
                   >
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-gradient-to-r from-[#003B7A]/40 to-transparent">
-                      <div className="flex items-center gap-2.5">
-                        <span className="relative flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#E8003D] opacity-50" />
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-[#E8003D]" />
-                        </span>
-                        <span className="font-display text-white tracking-[0.25em] text-base leading-none">
-                          CABINE {video.cabine_id}
-                        </span>
-                      </div>
-                      {session.participants[video.cabine_id - 1] && (
+                    {/* header do card */}
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-gradient-to-r from-[#003B7A]/40 to-transparent">
+                      <span className="text-white/40 text-xs font-body">{date}</span>
+                      {participantName && (
                         <span className="text-[#FFD200] font-display tracking-wider text-sm">
-                          {session.participants[video.cabine_id - 1].toUpperCase()}
+                          {participantName.toUpperCase()}
                         </span>
                       )}
                     </div>
 
+                    {/* vídeo 9:16 */}
                     <div className="relative w-full" style={{ paddingBottom: "177.78%" }}>
                       <video
                         src={video.video_url}
@@ -126,10 +140,13 @@ export default async function GaleriaIndexPage() {
                       />
                     </div>
 
+                    {/* download */}
                     <a
                       href={video.video_url}
-                      download={`bazuca-${session.session_id}-cabine${video.cabine_id}.mp4`}
-                      className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A] font-display text-[1.6rem] tracking-[0.15em] py-5 hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase"
+                      download={`bazuca-${session.session_id}-cabine${cabineId}.mp4`}
+                      className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A]
+                                 font-display text-[1.6rem] tracking-[0.15em] py-5
+                                 hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase"
                     >
                       BAIXAR VÍDEO
                       <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 flex-shrink-0" aria-hidden>
@@ -139,11 +156,11 @@ export default async function GaleriaIndexPage() {
                       </svg>
                     </a>
                   </article>
-                ))}
-              </div>
-            </section>
-          );
-        })}
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </main>
 
       <footer className="relative z-10 pb-10 px-5 text-center">
