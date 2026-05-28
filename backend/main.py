@@ -98,7 +98,7 @@ def verify_agent(authorization: str = Header(...)):
 
 class CreateSessionRequest(BaseModel):
     operator_name: str
-    participants: list[str]
+    participants: list[str] = []
 
 
 class CompleteSessionRequest(BaseModel):
@@ -252,10 +252,15 @@ async def cabine_qr(session_id: str, cabine_id: int, db: AsyncSession = Depends(
 async def meu_video_qr():
     import qrcode
     import qrcode.image.svg
+    import urllib.parse
+
     frontend_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
-    url = f"{frontend_url}/meu-video"
+    face_scan_url = f"{frontend_url}/meu-video"
+    message = f"Acesse o link para resgatar seu vídeo: {face_scan_url}"
+    whatsapp_url = f"https://wa.me/5511972936666?text={urllib.parse.quote(message)}"
+
     qr = qrcode.QRCode(border=2)
-    qr.add_data(url)
+    qr.add_data(whatsapp_url)
     qr.make(fit=True)
     image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
     buffer = io.BytesIO()
