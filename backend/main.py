@@ -281,8 +281,14 @@ async def buscar_video(body: BuscarVideoRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="imagem_base64 inválida")
 
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Imagem vazia. Tente tirar a foto novamente.")
+
     rekognition = RekognitionService()
-    matches = rekognition.buscar_rosto(image_bytes, COLLECTION_ID)
+    try:
+        matches = rekognition.buscar_rosto(image_bytes, COLLECTION_ID)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Não foi possível detectar um rosto. Centralize seu rosto e tente novamente.")
 
     if not matches:
         raise HTTPException(status_code=404, detail="Rosto não encontrado. Tente novamente.")
