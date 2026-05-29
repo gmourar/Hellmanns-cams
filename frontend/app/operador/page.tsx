@@ -4,7 +4,7 @@ import { useState } from "react";
 import Image from "next/image";
 import { startSession, getGallery } from "@/lib/api";
 
-type Phase = "idle" | "naming" | "recording" | "processing" | "error";
+type Phase = "idle" | "recording" | "processing" | "error";
 
 const RECORD_SECONDS = 5;
 
@@ -46,24 +46,20 @@ function BrandBar({ dot }: { dot: "online" | "recording" | "off" }) {
 function Background() {
   return (
     <div className="absolute inset-0 pointer-events-none select-none overflow-hidden" aria-hidden>
-      {/* textura foto */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/bg-texture.jpg" alt=""
         className="absolute inset-0 w-full h-full object-cover opacity-[0.12]"
         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
       />
-      {/* gradiente radial central */}
       <div className="absolute inset-0"
         style={{ background: "radial-gradient(ellipse 80% 60% at 50% 40%, rgba(0,59,122,0.35) 0%, transparent 70%)" }}
       />
-      {/* listras diagonais */}
       <div className="absolute inset-0 opacity-[0.04]"
         style={{
           backgroundImage: "repeating-linear-gradient(-45deg, #FFD200 0, #FFD200 1px, transparent 0, transparent 40px)",
           backgroundSize: "56px 56px",
         }}
       />
-      {/* vinheta nas bordas */}
       <div className="absolute inset-0"
         style={{ background: "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 40%, rgba(0,0,0,0.7) 100%)" }}
       />
@@ -87,18 +83,15 @@ function Ball({ className }: { className?: string }) {
 // ─── componente principal ─────────────────────────────────────────────────────
 export default function OperadorPage() {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [participants, setParticipants] = useState(["", "", ""]);
   const [secondsLeft, setSecondsLeft] = useState(RECORD_SECONDS);
   const [error, setError] = useState<string | null>(null);
 
   async function handleStart() {
-    const valid = participants.map((p) => p.trim()).filter(Boolean);
-    if (valid.length === 0) { setError("Coloca pelo menos um nome, mano"); return; }
     try {
       setError(null);
       setPhase("recording");
       setSecondsLeft(RECORD_SECONDS);
-      const resp = await startSession({ operator_name: "Promotor da ativação", participants: valid });
+      const resp = await startSession({ operator_name: "Promotor da ativação", participants: [] });
       const iv = setInterval(() => {
         setSecondsLeft((s) => {
           if (s <= 1) { clearInterval(iv); setPhase("processing"); pollForVideos(resp.session_id); return 0; }
@@ -127,7 +120,8 @@ export default function OperadorPage() {
   }
 
   function reset() {
-    setPhase("idle"); setParticipants(["", "", ""]); setError(null);
+    setPhase("idle");
+    setError(null);
   }
 
   const progress = ((RECORD_SECONDS - secondsLeft) / RECORD_SECONDS) * 100;
@@ -194,7 +188,7 @@ export default function OperadorPage() {
           {/* botão INICIAR — zona do polegar */}
           <div className="w-full max-w-sm space-y-2">
             <button
-              onClick={() => setPhase("naming")}
+              onClick={handleStart}
               className="w-full bg-[#FFD200] text-[#0A0A0A] font-display text-[2.4rem] tracking-[0.15em] py-6 rounded-3xl
                          shadow-[0_0_60px_rgba(255,210,0,0.4),0_4px_20px_rgba(0,0,0,0.5)]
                          hover:shadow-[0_0_90px_rgba(255,210,0,0.6),0_4px_20px_rgba(0,0,0,0.5)]
@@ -206,96 +200,6 @@ export default function OperadorPage() {
             <p className="text-center text-white/15 text-[10px] tracking-[0.35em] uppercase font-body">
               toque para começar
             </p>
-          </div>
-        </main>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════ NAMING */}
-      {phase === "naming" && (
-        <main className="relative z-10 flex-1 flex flex-col px-5 pt-6 pb-8 animate-slide_up">
-          <div className="mb-7">
-            <p className="text-white/25 text-[9px] tracking-[0.35em] uppercase font-body mb-2">
-              PASSO 1 — IDENTIFICAÇÃO
-            </p>
-            <h2 className="font-display text-[3rem] leading-[0.9] text-white tracking-wider">
-              QUEM TÁ{" "}
-              <span className="text-[#FFD200]">NA FITA?</span>
-            </h2>
-            <p className="text-white/35 text-sm mt-2 font-body">
-              Nome de quem vai aparecer no vídeo
-            </p>
-          </div>
-
-          {/* inputs */}
-          <div className="flex-1 flex flex-col gap-3">
-            {participants.map((name, i) => (
-              <div key={i}
-                className="relative flex items-center gap-3 px-4 py-4 rounded-2xl border transition-all duration-200
-                           bg-white/[0.04] border-white/10
-                           focus-within:border-[#FFD200]/50 focus-within:bg-[#FFD200]/[0.04]
-                           focus-within:shadow-[0_0_20px_rgba(255,210,0,0.08)]"
-              >
-                {/* número cabine */}
-                <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-[#003B7A]/70 border border-[#003B7A] flex flex-col items-center justify-center gap-0.5">
-                  <CameraIcon size="sm" />
-                  <span className="text-[7px] text-white/40 font-display tracking-widest leading-none">{i + 1}</span>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <span className="block text-[8px] text-white/25 uppercase tracking-[0.25em] font-body mb-0.5">
-                    CABINE {i + 1}
-                  </span>
-                  <input
-                    value={name}
-                    onChange={(e) => { const n = [...participants]; n[i] = e.target.value; setParticipants(n); }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const inputs = document.querySelectorAll<HTMLInputElement>("input[data-p]");
-                        inputs[i + 1]?.focus();
-                      }
-                    }}
-                    data-p={i}
-                    placeholder="Nome do participante"
-                    autoCapitalize="words"
-                    className="w-full bg-transparent text-white text-xl font-body placeholder:text-white/20 focus:outline-none"
-                  />
-                </div>
-
-                {name && (
-                  <button
-                    onClick={() => { const n = [...participants]; n[i] = ""; setParticipants(n); }}
-                    className="flex-shrink-0 w-7 h-7 rounded-full bg-white/10 text-white/40 flex items-center justify-center text-sm hover:bg-white/20 transition-colors"
-                    aria-label="Limpar"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {error && (
-            <div className="mt-4 bg-[#E8003D]/10 border border-[#E8003D]/30 rounded-xl px-4 py-3 flex items-center gap-2">
-              <span className="text-[#E8003D] text-xl font-display leading-none">!</span>
-              <p className="text-white/80 text-sm font-body">{error}</p>
-            </div>
-          )}
-
-          <div className="mt-6 flex gap-3">
-            <button onClick={reset}
-              className="flex-none px-5 py-4 rounded-xl border border-white/10 text-white/35 font-body text-sm
-                         hover:text-white/60 hover:border-white/25 active:scale-95 transition-all duration-150"
-            >
-              VOLTAR
-            </button>
-            <button onClick={handleStart}
-              className="flex-1 bg-[#E8003D] hover:bg-[#c4002f] text-white font-display text-[2rem] tracking-[0.15em] py-4 rounded-xl
-                         shadow-[0_0_40px_rgba(232,0,61,0.45)]
-                         hover:shadow-[0_0_60px_rgba(232,0,61,0.65)]
-                         active:scale-95 transition-all duration-150 uppercase"
-            >
-              DISPARAR
-            </button>
           </div>
         </main>
       )}

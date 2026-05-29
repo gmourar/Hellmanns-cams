@@ -210,6 +210,17 @@ async def smoke_test():
     else:
         logger.error("SMOKE TEST PARTIAL — %d/%d cameras OK", ok_count, len(cameras))
 
+    from src.video import process_video
+
+    for cabine_id, result in results.items():
+        if isinstance(result, Exception):
+            continue
+        mp4_path = raw_dir / f"cabine_{cabine_id}.mp4"
+        try:
+            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED)
+        except Exception as exc:
+            logger.error("cabine %d: falha ao gerar MP4: %s", cabine_id, exc)
+
     sdk.EdsTerminateSDK()
 
 
