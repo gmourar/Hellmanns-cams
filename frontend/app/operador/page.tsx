@@ -167,14 +167,14 @@ export default function OperadorPage() {
 
             {/* título principal */}
             <div className="space-y-0">
-              <h1 className="font-display text-[5.5rem] leading-[0.85] tracking-wider text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)]">
-                BAZUCA
+              <h1 className="font-display text-[3.2rem] leading-[0.85] tracking-wider text-[#FFD200] drop-shadow-[0_0_40px_rgba(255,210,0,0.4)]">
+                BASKET AIR
               </h1>
-              <h1 className="font-display text-[5.5rem] leading-[0.85] tracking-wider text-[#FFD200] drop-shadow-[0_0_40px_rgba(255,210,0,0.4)]">
-                DE
+              <h1 className="font-display text-[3.2rem] leading-[0.85] tracking-wider text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)]">
+                CHALLENGE
               </h1>
-              <h1 className="font-display text-[5.5rem] leading-[0.85] tracking-wider text-white drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)]">
-                BOLINHAS
+              <h1 className="font-display text-[2.4rem] leading-[1] tracking-wider text-white/50 drop-shadow-[0_2px_24px_rgba(0,0,0,0.8)]">
+                HELLMANNS
               </h1>
             </div>
 
@@ -188,6 +188,8 @@ export default function OperadorPage() {
             <p className="text-white/30 text-xs tracking-[0.3em] uppercase font-body">
               3 CÂMERAS · {RECORD_SECONDS}S · SLOW-MOTION
             </p>
+
+            <p className="font-display text-[#FFD200]/50 text-lg tracking-wider">#BasketAirChallenge</p>
 
             {/* indicadores de câmera */}
             <div className="flex items-center justify-center gap-4 pt-1">

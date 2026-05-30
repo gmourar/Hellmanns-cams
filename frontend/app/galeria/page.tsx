@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { getSessions, SessionSummary, GalleryVideo } from "@/lib/api";
+import { QrDropdown } from "./QrDropdown";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ function groupByDay(sessions: SessionSummary[]): DayGroup[] {
 
   for (const session of sessions) {
     const d = new Date(session.created_at);
-    const dateKey = d.toISOString().split("T")[0]; // YYYY-MM-DD (UTC)
+    const dateKey = d.toISOString().split("T")[0];
     const label = d.toLocaleDateString("pt-BR", {
       weekday: "long",
       day: "2-digit",
@@ -34,7 +35,6 @@ function groupByDay(sessions: SessionSummary[]): DayGroup[] {
     }
   }
 
-  // mais recente primeiro
   return Array.from(map.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
 }
 
@@ -79,8 +79,12 @@ export default async function GaleriaIndexPage() {
 
         <p className="text-white/25 font-body text-[9px] tracking-[0.45em] uppercase mb-2">NBA HOUSE BRASIL</p>
         <div className="space-y-0 mb-4">
-          <h1 className="font-display text-[3.6rem] leading-[0.85] tracking-wider text-[#FFD200] drop-shadow-[0_0_40px_rgba(255,210,0,0.35)]">BAZUCA</h1>
-          <h1 className="font-display text-[3.6rem] leading-[0.85] tracking-wider text-white">DE BOLINHAS</h1>
+          <h1 className="font-display text-[2.8rem] leading-[0.85] tracking-wider text-[#FFD200] drop-shadow-[0_0_40px_rgba(255,210,0,0.35)]">
+            BASKET AIR CHALLENGE
+          </h1>
+          <h1 className="font-display text-[2.8rem] leading-[0.85] tracking-wider text-white">
+            HELLMANNS
+          </h1>
         </div>
 
         <p className="text-white/40 text-sm mb-6">
@@ -168,10 +172,15 @@ export default async function GaleriaIndexPage() {
                       />
                     </div>
 
+                    {/* QR dropdown */}
+                    {video.qr_url && (
+                      <QrDropdown qrUrl={video.qr_url} cabineId={video.cabine_id} />
+                    )}
+
                     {/* download */}
                     <a
                       href={video.video_url}
-                      download={`bazuca-${session.session_id}-cabine${video.cabine_id}.mp4`}
+                      download={`basket-air-challenge-${session.session_id}-cabine${video.cabine_id}.mp4`}
                       className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A]
                                  font-display text-[1.6rem] tracking-[0.15em] py-5
                                  hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase"
@@ -197,7 +206,7 @@ export default async function GaleriaIndexPage() {
           <div className="h-1 w-6 bg-[#FFD200]/40 rounded-full" />
           <div className="h-px flex-1 bg-white/10" />
         </div>
-        <p className="font-display text-[#FFD200] text-2xl tracking-wider">#BazucadeBolinhas</p>
+        <p className="font-display text-[#FFD200] text-2xl tracking-wider">#BasketAirChallenge</p>
         <p className="font-display text-white/30 text-lg tracking-wider">#HellmannsNBA</p>
       </footer>
     </div>

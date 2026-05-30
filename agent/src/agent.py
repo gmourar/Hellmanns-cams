@@ -92,7 +92,7 @@ async def handle_record(sdk, session_id: str):
             raw_path = result
             out_path = out_dir / f"cabine_{cabine_id}.mp4"
             try:
-                await process_video(raw_path, out_path, FFMPEG_PATH, VIDEO_SPEED)
+                await process_video(raw_path, out_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id == 1))
                 raw_path.unlink(missing_ok=True)
                 if not out_path.exists() or out_path.stat().st_size == 0:
                     errors.append(f"cabine {cabine_id}: vídeo de saída vazio ou ausente")
@@ -217,7 +217,7 @@ async def smoke_test():
             continue
         mp4_path = raw_dir / f"cabine_{cabine_id}.mp4"
         try:
-            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED)
+            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id == 1))
         except Exception as exc:
             logger.error("cabine %d: falha ao gerar MP4: %s", cabine_id, exc)
 

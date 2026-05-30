@@ -57,11 +57,13 @@ async def process_video(
     output: Path,
     ffmpeg_path: str = "ffmpeg",
     video_speed: float = 0.75,
+    vflip: bool = False,
 ) -> Path:
     """
     Async wrapper around FFmpeg pipeline:
     - Apply playback speed to the full clip
     - Transpose (rotate 90° for vertical mount) + crop to 9:16
+    - Optional vertical flip (vflip=True) for cameras mounted upside-down
     - Encode H.264 + AAC
     Returns output path.
     """
@@ -72,10 +74,11 @@ async def process_video(
     atempo = _atempo_chain(video_speed)
     pts_multiplier = 1.0 / video_speed
     portrait = _portrait_filter()
+    flip = "vflip," if vflip else ""
     w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
 
     filter_complex = (
-        f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{portrait}[outv];"
+        f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[outv];"
         f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
     )
 
