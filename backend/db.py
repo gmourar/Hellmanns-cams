@@ -28,10 +28,18 @@ class Session(Base):
     indexing_status = Column(String, default="pending")  # pending | indexing | indexed | error
     indexed_at      = Column(DateTime, nullable=True)
     indexing_error  = Column(Text, nullable=True)
+    cabine_ids      = Column(Text, nullable=True)    # JSON "[1, 2, 3]" — set by agent on complete
+    agent_acked_at  = Column(DateTime, nullable=True)  # set when agent acks RECORD command
 
     @property
     def participants_list(self) -> list:
         return json.loads(self.participants)
+
+    @property
+    def cabine_ids_list(self) -> list[int]:
+        if not self.cabine_ids:
+            return []
+        return json.loads(self.cabine_ids)
 
 
 async def _run_migrations(conn):
@@ -44,6 +52,10 @@ async def _run_migrations(conn):
         await conn.execute(text("ALTER TABLE sessions ADD COLUMN indexed_at DATETIME"))
     if "indexing_error" not in existing_cols:
         await conn.execute(text("ALTER TABLE sessions ADD COLUMN indexing_error TEXT"))
+    if "cabine_ids" not in existing_cols:
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN cabine_ids TEXT"))
+    if "agent_acked_at" not in existing_cols:
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN agent_acked_at DATETIME"))
 
 
 async def init_db():

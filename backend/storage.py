@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -97,3 +98,22 @@ def available_cabine_ids(session_id: str) -> list[int]:
         for cabine_id in range(1, MAX_CABINES + 1)
         if video_exists(session_id, cabine_id)
     ]
+
+
+# ── Async wrappers (never block the FastAPI event loop) ───────────────────────
+
+async def video_exists_async(session_id: str, cabine_id: int) -> bool:
+    return await asyncio.to_thread(video_exists, session_id, cabine_id)
+
+
+async def public_url_async(session_id: str, cabine_id: int) -> str:
+    return await asyncio.to_thread(public_url, session_id, cabine_id)
+
+
+async def available_cabine_ids_async(session_id: str) -> list[int]:
+    """Parallel S3 existence check — does not block the event loop."""
+    cabine_range = range(1, MAX_CABINES + 1)
+    results = await asyncio.gather(*[
+        video_exists_async(session_id, c) for c in cabine_range
+    ])
+    return [c for c, exists in zip(cabine_range, results) if exists]

@@ -1,4 +1,4 @@
-import base64, io, json, os, uuid, logging
+import asyncio, base64, io, json, os, uuid, logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -46,7 +46,7 @@ async def _recover_pending_sessions():
     - status='recording' → reenfileira o RECORD (agente nunca recebeu)
     - indexing_status='indexing' ou status='ready'+pending → relança indexação
     """
-    import asyncio as _asyncio
+    _asyncio = asyncio
     async with SessionLocal() as db:
         result = await db.execute(
             select(SessionModel).where(
@@ -64,6 +64,13 @@ async def _recover_pending_sessions():
 
     for session in sessions:
         if session.status == "recording":
+            if session.agent_acked_at is not None:
+                # Agent already received the command — trust it to complete or timeout
+                logger.warning(
+                    "Sessão %s em 'recording' mas agente já deu ack em %s — aguardando conclusão",
+                    session.session_id, session.agent_acked_at,
+                )
+                continue
             logger.warning("Recuperando sessão %s em 'recording' — reenfileirando RECORD", session.session_id)
             await q_module.push({"type": "RECORD", "session_id": session.session_id})
         elif session.status == "ready" and session.indexing_status in ("indexing", "pending"):
@@ -102,8 +109,9 @@ class CreateSessionRequest(BaseModel):
 
 
 class CompleteSessionRequest(BaseModel):
-    status: str          # "ok" | "error"
+    status: str                  # "ok" | "error"
     detail: str | None = None
+    cabine_ids: list[int] = []   # cabines that uploaded successfully
 
 
 class GalleryVideo(BaseModel):
@@ -147,6 +155,24 @@ async def create_session(
 
 # ── Agent endpoints ───────────────────────────────────────────────────────────
 
+@app.post("/agent/sessions/{session_id}/ack")
+async def agent_ack(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_agent),
+):
+    """Agent calls this immediately after receiving a RECORD command to prevent double-dispatch on restart."""
+    result = await db.execute(
+        select(SessionModel).where(SessionModel.session_id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.agent_acked_at = datetime.utcnow()
+    await db.commit()
+    return {"ok": True}
+
+
 @app.get("/agent/poll")
 async def agent_poll(_=Depends(verify_agent)):
     command = await q_module.wait(timeout=30.0)
@@ -173,6 +199,8 @@ async def agent_complete(
 
     if body.status == "ok":
         session.status = "ready"
+        if body.cabine_ids:
+            session.cabine_ids = json.dumps(sorted(body.cabine_ids))
         await db.commit()
         background_tasks.add_task(indexar_sessao, session_id)
     else:
@@ -196,13 +224,21 @@ async def gallery(session_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
 
     participants = session.participants_list
+    cabine_ids = session.cabine_ids_list
+    if not cabine_ids:
+        cabine_ids = await storage.available_cabine_ids_async(session_id)
+
+    _asyncio = asyncio
+    urls = await _asyncio.gather(*[
+        storage.public_url_async(session_id, c) for c in cabine_ids
+    ])
     videos = [
         GalleryVideo(
-            cabine_id=cabine_id,
-            video_url=storage.public_url(session_id, cabine_id),
-            qr_url=f"{storage.BASE_URL}/gallery/{session_id}/cabines/{cabine_id}/qr.svg",
+            cabine_id=c,
+            video_url=url,
+            qr_url=f"{storage.BASE_URL}/gallery/{session_id}/cabines/{c}/qr.svg",
         )
-        for cabine_id in storage.available_cabine_ids(session_id)
+        for c, url in zip(cabine_ids, urls)
     ]
 
     return {
@@ -226,15 +262,16 @@ async def cabine_qr(session_id: str, cabine_id: int, db: AsyncSession = Depends(
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not storage.video_exists(session_id, cabine_id):
+    if not await storage.video_exists_async(session_id, cabine_id):
         raise HTTPException(status_code=404, detail="Video not found")
 
     import qrcode
     import qrcode.image.svg
 
-    video_url = storage.public_url(session_id, cabine_id)
+    # Stable redirect URL — never expires, generates fresh presigned on each scan
+    stable_url = f"{storage.BASE_URL}/videos/{session_id}/cabine_{cabine_id}.mp4"
     qr = qrcode.QRCode(border=2)
-    qr.add_data(video_url)
+    qr.add_data(stable_url)
     qr.make(fit=True)
     image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
     buffer = io.BytesIO()
@@ -286,7 +323,7 @@ async def buscar_video(body: BuscarVideoRequest):
 
     rekognition = RekognitionService()
     try:
-        matches = rekognition.buscar_rosto(image_bytes, COLLECTION_ID)
+        matches = await rekognition.buscar_rosto_async(image_bytes, COLLECTION_ID)
     except Exception:
         raise HTTPException(status_code=400, detail="Não foi possível detectar um rosto. Centralize seu rosto e tente novamente.")
 
@@ -295,7 +332,7 @@ async def buscar_video(body: BuscarVideoRequest):
 
     # Deduplica por external_image_id (vários frames da mesma cabine podem dar match)
     seen: set[str] = set()
-    results = []
+    candidates: list[tuple[str, int, float]] = []
     for match in sorted(matches, key=lambda m: m["similarity"], reverse=True):
         external_id = match["external_image_id"]
         if external_id in seen:
@@ -303,17 +340,28 @@ async def buscar_video(body: BuscarVideoRequest):
         seen.add(external_id)
         try:
             parts = external_id.split("_c")
-            session_id = parts[0]
-            cabine_id = int(parts[1])
+            s_id = parts[0]
+            c_id = int(parts[1])
         except (IndexError, ValueError):
             continue
-        if not storage.video_exists(session_id, cabine_id):
+        candidates.append((s_id, c_id, match["similarity"]))
+
+    # Check S3 existence and generate URLs in parallel
+    _asyncio = asyncio
+    exists_flags, urls = await _asyncio.gather(
+        _asyncio.gather(*[storage.video_exists_async(s, c) for s, c, _ in candidates]),
+        _asyncio.gather(*[storage.public_url_async(s, c) for s, c, _ in candidates]),
+    )
+
+    results = []
+    for (s_id, c_id, similarity), ok, url in zip(candidates, exists_flags, urls):
+        if not ok:
             continue
         results.append({
-            "session_id": session_id,
-            "cabine_id": cabine_id,
-            "video_url": storage.public_url(session_id, cabine_id),
-            "similarity": match["similarity"],
+            "session_id": s_id,
+            "cabine_id": c_id,
+            "video_url": url,
+            "similarity": similarity,
         })
 
     if not results:
@@ -333,16 +381,28 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
     )
     sessions = result.scalars().all()
 
-    response = []
-    for session in sessions:
-        videos = [
+    async def _session_videos(session: SessionModel) -> list[dict]:
+        # Use DB-stored cabine_ids to avoid N+1 S3 head_object calls
+        cabine_ids = session.cabine_ids_list
+        if not cabine_ids:
+            cabine_ids = await storage.available_cabine_ids_async(session.session_id)
+        urls = await asyncio.gather(*[
+            storage.public_url_async(session.session_id, c) for c in cabine_ids
+        ])
+        return [
             {
-                "cabine_id": cabine_id,
-                "video_url": storage.public_url(session.session_id, cabine_id),
-                "qr_url": f"{storage.BASE_URL}/gallery/{session.session_id}/cabines/{cabine_id}/qr.svg",
+                "cabine_id": c,
+                "video_url": url,
+                "qr_url": f"{storage.BASE_URL}/gallery/{session.session_id}/cabines/{c}/qr.svg",
             }
-            for cabine_id in storage.available_cabine_ids(session.session_id)
+            for c, url in zip(cabine_ids, urls)
         ]
+
+    _asyncio = asyncio
+    video_lists = await _asyncio.gather(*[_session_videos(s) for s in sessions])
+
+    response = []
+    for session, videos in zip(sessions, video_lists):
         response.append({
             "session_id": session.session_id,
             "operator_name": session.operator_name,
@@ -366,9 +426,9 @@ async def serve_video(session_id: str, filename: str):
                 cabine_id = int(filename.removeprefix("cabine_").removesuffix(".mp4"))
             except ValueError:
                 pass
-        if cabine_id and storage.video_exists(session_id, cabine_id):
+        if cabine_id and await storage.video_exists_async(session_id, cabine_id):
             from fastapi.responses import RedirectResponse
-            return RedirectResponse(storage.public_url(session_id, cabine_id))
+            return RedirectResponse(await storage.public_url_async(session_id, cabine_id))
         raise HTTPException(status_code=404, detail="Video on S3 — use gallery URLs")
     path = storage.video_dir(session_id) / filename
     if not path.exists():

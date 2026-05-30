@@ -2,6 +2,7 @@
 Serviço de reconhecimento facial via AWS Rekognition.
 Adaptado do photo-finder para o contexto de vídeos da cabine.
 """
+import asyncio
 import os
 import logging
 from typing import Optional
@@ -131,3 +132,29 @@ class RekognitionService:
         except Exception as e:
             logger.error("Erro na busca facial: %s", e)
             raise
+
+    # ── Async wrappers (never block the FastAPI event loop) ───────────────────
+
+    async def criar_colecao_se_nao_existir_async(self, collection_id: str = COLLECTION_ID) -> None:
+        await asyncio.to_thread(self.criar_colecao_se_nao_existir, collection_id)
+
+    async def indexar_face_async(
+        self,
+        image_bytes: bytes,
+        external_image_id: str,
+        collection_id: str = COLLECTION_ID,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.indexar_face, image_bytes, external_image_id, collection_id
+        )
+
+    async def buscar_rosto_async(
+        self,
+        image_bytes: bytes,
+        collection_id: str = COLLECTION_ID,
+        threshold: float = 40.0,
+        max_faces: int = 10,
+    ) -> list[dict]:
+        return await asyncio.to_thread(
+            self.buscar_rosto, image_bytes, collection_id, threshold, max_faces
+        )
