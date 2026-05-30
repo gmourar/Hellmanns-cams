@@ -11,6 +11,11 @@ VIDEO_TRANSPOSE = os.environ.get("VIDEO_TRANSPOSE", "1").strip()
 FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
 FFMPEG_CRF = os.environ.get("FFMPEG_CRF", "24")
 
+# Moldura PNG com transparência — sobreposta ao vídeo processado.
+# Padrão: moldura_transparente.png na raiz do projeto (um nível acima de agent/).
+_default_overlay = str(Path(__file__).parent.parent.parent / "moldura_transparente.png")
+OVERLAY_PATH = os.environ.get("OVERLAY_PATH", _default_overlay)
+
 
 def get_duration(path: Path) -> float:
     """Uses ffprobe to get video duration in seconds."""
@@ -64,6 +69,7 @@ async def process_video(
     - Apply playback speed to the full clip
     - Transpose (rotate 90° for vertical mount) + crop to 9:16
     - Optional vertical flip (vflip=True) for cameras mounted upside-down
+    - Overlay moldura PNG on top (alpha blending) if OVERLAY_PATH exists
     - Encode H.264 + AAC
     Returns output path.
     """
@@ -77,21 +83,45 @@ async def process_video(
     flip = "vflip," if vflip else ""
     w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
 
-    filter_complex = (
-        f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[outv];"
-        f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
-    )
+    overlay_file = Path(OVERLAY_PATH) if OVERLAY_PATH else None
+    use_overlay = bool(overlay_file and overlay_file.exists())
 
-    cmd = [
-        ffmpeg_path, "-y", "-noautorotate",
-        "-i", str(raw_video),
-        "-filter_complex", filter_complex,
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart",
-        str(output),
-    ]
+    if use_overlay:
+        logger.info("Aplicando moldura: %s", overlay_file)
+        filter_complex = (
+            f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[vid];"
+            f"[1:v]scale={w}:{h}[frame];"
+            f"[vid][frame]overlay=0:0:format=auto[outv];"
+            f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
+        )
+        cmd = [
+            ffmpeg_path, "-y", "-noautorotate",
+            "-i", str(raw_video),
+            "-i", str(overlay_file),
+            "-filter_complex", filter_complex,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            str(output),
+        ]
+    else:
+        if OVERLAY_PATH:
+            logger.warning("Moldura não encontrada em %s — processando sem overlay", OVERLAY_PATH)
+        filter_complex = (
+            f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[outv];"
+            f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
+        )
+        cmd = [
+            ffmpeg_path, "-y", "-noautorotate",
+            "-i", str(raw_video),
+            "-filter_complex", filter_complex,
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            str(output),
+        ]
 
     logger.info("FFmpeg processing: %s → %s", raw_video.name, output.name)
     proc = await asyncio.create_subprocess_exec(
