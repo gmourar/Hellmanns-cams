@@ -4,9 +4,10 @@ import { useState } from "react";
 import Image from "next/image";
 import { startSession, getGallery } from "@/lib/api";
 
-type Phase = "idle" | "recording" | "processing" | "error";
+type Phase = "idle" | "countdown" | "recording" | "processing" | "error";
 
-const RECORD_SECONDS = 5;
+const PRE_SECONDS = 3;    // contagem de preparação (3-2-1) enquanto o agente inicializa as câmeras
+const RECORD_SECONDS = 5; // contagem de gravação (deve bater com RECORD_DURATION do agente)
 
 // ─── inline SVG camera ────────────────────────────────────────────────────────
 function CameraIcon({ active, size = "md" }: { active?: boolean; size?: "sm" | "md" }) {
@@ -86,18 +87,34 @@ export default function OperadorPage() {
   const [secondsLeft, setSecondsLeft] = useState(RECORD_SECONDS);
   const [error, setError] = useState<string | null>(null);
 
+  function runCountdown(seconds: number, onTick: (s: number) => void): Promise<void> {
+    return new Promise((resolve) => {
+      let s = seconds;
+      onTick(s);
+      const iv = setInterval(() => {
+        s -= 1;
+        if (s <= 0) { clearInterval(iv); resolve(); }
+        else onTick(s);
+      }, 1000);
+    });
+  }
+
   async function handleStart() {
     try {
       setError(null);
-      setPhase("recording");
-      setSecondsLeft(RECORD_SECONDS);
+      // Inicia a sessão imediatamente (agente começa a preparar as câmeras)
       const resp = await startSession({ operator_name: "Promotor da ativação", participants: [] });
-      const iv = setInterval(() => {
-        setSecondsLeft((s) => {
-          if (s <= 1) { clearInterval(iv); setPhase("processing"); pollForVideos(resp.session_id); return 0; }
-          return s - 1;
-        });
-      }, 1000);
+
+      // Fase 1: contagem de preparação (3-2-1) — agente inicializando câmeras
+      setPhase("countdown");
+      await runCountdown(PRE_SECONDS, (s) => setSecondsLeft(s));
+
+      // Fase 2: contagem de gravação
+      setPhase("recording");
+      await runCountdown(RECORD_SECONDS, (s) => setSecondsLeft(s));
+
+      setPhase("processing");
+      pollForVideos(resp.session_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "erro desconhecido");
       setPhase("error");
@@ -125,7 +142,7 @@ export default function OperadorPage() {
   }
 
   const progress = ((RECORD_SECONDS - secondsLeft) / RECORD_SECONDS) * 100;
-  const dot: "online" | "recording" | "off" = phase === "recording" ? "recording" : phase === "error" ? "off" : "online";
+  const dot: "online" | "recording" | "off" = (phase === "recording" || phase === "countdown") ? "recording" : phase === "error" ? "off" : "online";
 
   return (
     <div className="relative min-h-screen flex flex-col bg-[#0A0A0A] overflow-hidden font-body">
@@ -200,6 +217,49 @@ export default function OperadorPage() {
             <p className="text-center text-white/15 text-[10px] tracking-[0.35em] uppercase font-body">
               toque para começar
             </p>
+          </div>
+        </main>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════ COUNTDOWN (3-2-1) */}
+      {phase === "countdown" && (
+        <main className="relative z-10 flex-1 flex flex-col items-center justify-between px-6 py-8">
+          <div className="absolute inset-0 bg-[#003B7A]/20 pointer-events-none" aria-hidden />
+
+          <div className="flex flex-col items-center gap-3 pt-2 w-full">
+            <div className="flex items-center gap-2.5 bg-[#FFD200]/15 border border-[#FFD200]/40 px-5 py-2 rounded-full">
+              <span className="w-3 h-3 rounded-full bg-[#FFD200] animate-pulse flex-shrink-0" />
+              <span className="font-display text-[#FFD200] text-2xl tracking-[0.35em] leading-none">
+                PREPARANDO
+              </span>
+            </div>
+
+            {/* número gigante */}
+            <div
+              className="font-display text-[14rem] leading-none text-white tabular-nums
+                         drop-shadow-[0_0_80px_rgba(255,255,255,0.3)]"
+              style={{ textShadow: "0 0 120px rgba(255,210,0,0.3), 0 4px 32px rgba(0,0,0,0.8)" }}
+              aria-live="assertive"
+              aria-label={`${secondsLeft}`}
+            >
+              {secondsLeft}
+            </div>
+
+            <p className="text-white/30 font-body text-xs tracking-[0.35em] uppercase">
+              CÂMERAS INICIANDO
+            </p>
+          </div>
+
+          <div className="flex items-center justify-center gap-5 pb-6">
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="flex flex-col items-center gap-1.5">
+                <div className="relative w-14 h-14 rounded-2xl bg-[#FFD200]/10 border border-[#FFD200]/40 flex items-center justify-center">
+                  <CameraIcon />
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#FFD200] animate-ping opacity-60" />
+                </div>
+                <span className="text-[9px] text-[#FFD200]/50 uppercase tracking-widest font-body">CAM {n}</span>
+              </div>
+            ))}
           </div>
         </main>
       )}

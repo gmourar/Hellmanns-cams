@@ -8,6 +8,36 @@ interface VideoEntry {
   video: GalleryVideo;
 }
 
+interface DayGroup {
+  label: string;
+  dateKey: string;
+  entries: VideoEntry[];
+}
+
+function groupByDay(sessions: SessionSummary[]): DayGroup[] {
+  const map = new Map<string, DayGroup>();
+
+  for (const session of sessions) {
+    const d = new Date(session.created_at);
+    const dateKey = d.toISOString().split("T")[0]; // YYYY-MM-DD (UTC)
+    const label = d.toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "2-digit",
+      month: "long",
+      timeZone: "America/Sao_Paulo",
+    });
+
+    if (!map.has(dateKey)) map.set(dateKey, { label, dateKey, entries: [] });
+
+    for (const video of session.videos) {
+      map.get(dateKey)!.entries.push({ session, video });
+    }
+  }
+
+  // mais recente primeiro
+  return Array.from(map.values()).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+}
+
 export default async function GaleriaIndexPage() {
   let sessions: SessionSummary[] = [];
   try {
@@ -16,15 +46,7 @@ export default async function GaleriaIndexPage() {
     // mostra lista vazia em caso de erro
   }
 
-  // Agrupa vídeos por cabine_id
-  const byCabine = new Map<number, VideoEntry[]>();
-  for (const session of sessions) {
-    for (const video of session.videos) {
-      if (!byCabine.has(video.cabine_id)) byCabine.set(video.cabine_id, []);
-      byCabine.get(video.cabine_id)!.push({ session, video });
-    }
-  }
-  const cabines = Array.from(byCabine.entries()).sort(([a], [b]) => a - b);
+  const days = groupByDay(sessions);
   const totalVideos = sessions.reduce((acc, s) => acc + s.videos.length, 0);
 
   return (
@@ -62,16 +84,16 @@ export default async function GaleriaIndexPage() {
         </div>
 
         <p className="text-white/40 text-sm mb-6">
-          {cabines.length} cabine(s) · {totalVideos} vídeo(s)
+          {days.length} dia(s) · {totalVideos} vídeo(s)
         </p>
 
-        {/* Navegação por cabine */}
-        {cabines.length > 1 && (
+        {/* Navegação por dia */}
+        {days.length > 1 && (
           <div className="flex justify-center gap-3 flex-wrap mb-2">
-            {cabines.map(([cabineId]) => (
-              <a key={cabineId} href={`#cabine-${cabineId}`}
-                className="font-display text-sm tracking-widest bg-[#FFD200]/10 border border-[#FFD200]/30 text-[#FFD200] px-5 py-2 rounded-full hover:bg-[#FFD200]/20 transition-colors">
-                CABINE {cabineId}
+            {days.map((day) => (
+              <a key={day.dateKey} href={`#dia-${day.dateKey}`}
+                className="font-display text-sm tracking-widest bg-[#FFD200]/10 border border-[#FFD200]/30 text-[#FFD200] px-5 py-2 rounded-full hover:bg-[#FFD200]/20 transition-colors capitalize">
+                {day.label}
               </a>
             ))}
           </div>
@@ -84,7 +106,7 @@ export default async function GaleriaIndexPage() {
         </div>
       </header>
 
-      {/* ── CABINES ── */}
+      {/* ── DIAS ── */}
       <main className="relative z-10 px-4 pb-12 max-w-[1500px] mx-auto space-y-14">
         {sessions.length === 0 && (
           <div className="text-center py-20">
@@ -92,41 +114,47 @@ export default async function GaleriaIndexPage() {
           </div>
         )}
 
-        {cabines.map(([cabineId, entries]) => (
-          <section key={cabineId} id={`cabine-${cabineId}`}>
-            {/* cabeçalho da cabine */}
+        {days.map((day) => (
+          <section key={day.dateKey} id={`dia-${day.dateKey}`}>
+
+            {/* cabeçalho do dia */}
             <div className="flex items-center gap-4 mb-6">
               <div className="flex items-center gap-2.5">
                 <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#E8003D] opacity-50" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[#E8003D]" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FFD200] opacity-40" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[#FFD200]" />
                 </span>
-                <h2 className="font-display text-[#FFD200] tracking-[0.3em] text-2xl">CABINE {cabineId}</h2>
+                <h2 className="font-display text-[#FFD200] tracking-[0.2em] text-2xl capitalize">
+                  {day.label}
+                </h2>
               </div>
-              <span className="text-white/25 text-sm">{entries.length} vídeo(s)</span>
+              <span className="text-white/25 text-sm">{day.entries.length} vídeo(s)</span>
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
-            {/* grid de vídeos da cabine */}
+            {/* grid de vídeos do dia */}
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
-              {entries.map(({ session, video }) => {
-                const participantName = session.participants[cabineId - 1];
-                const date = new Date(session.created_at).toLocaleString("pt-BR", {
-                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+              {day.entries.map(({ session, video }) => {
+                const time = new Date(session.created_at).toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  timeZone: "America/Sao_Paulo",
                 });
 
                 return (
-                  <article key={`${session.session_id}-${video.cabine_id}`}
+                  <article
+                    key={`${session.session_id}-${video.cabine_id}`}
                     className="rounded-3xl overflow-hidden bg-white/[0.04] border border-white/10 shadow-[0_12px_64px_rgba(0,0,0,0.7)]"
                   >
                     {/* header do card */}
                     <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-gradient-to-r from-[#003B7A]/40 to-transparent">
-                      <span className="text-white/40 text-xs font-body">{date}</span>
-                      {participantName && (
-                        <span className="text-[#FFD200] font-display tracking-wider text-sm">
-                          {participantName.toUpperCase()}
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#E8003D]" />
+                        <span className="text-white/50 text-xs font-body tracking-widest uppercase">
+                          Cabine {video.cabine_id}
                         </span>
-                      )}
+                      </div>
+                      <span className="text-white/30 text-xs font-body">{time}</span>
                     </div>
 
                     {/* vídeo 9:16 */}
@@ -143,7 +171,7 @@ export default async function GaleriaIndexPage() {
                     {/* download */}
                     <a
                       href={video.video_url}
-                      download={`bazuca-${session.session_id}-cabine${cabineId}.mp4`}
+                      download={`bazuca-${session.session_id}-cabine${video.cabine_id}.mp4`}
                       className="flex items-center justify-center gap-3 w-full bg-[#FFD200] text-[#0A0A0A]
                                  font-display text-[1.6rem] tracking-[0.15em] py-5
                                  hover:bg-[#ffe033] active:scale-[0.98] transition-all duration-150 uppercase"
