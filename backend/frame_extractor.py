@@ -62,18 +62,20 @@ async def _extrair_de_url(url: str) -> list[bytes]:
 
 
 async def _extrair_de_arquivo(file_path: str) -> list[bytes]:
-    """Extrai frames de um arquivo local via ffmpeg."""
+    """Extrai todos os frames em paralelo via ffmpeg (um processo por timestamp)."""
+    results = await asyncio.gather(
+        *[_extrair_frame(file_path, ts) for ts in FRAME_TIMESTAMPS],
+        return_exceptions=True,
+    )
     frames: list[bytes] = []
-    for ts in FRAME_TIMESTAMPS:
-        try:
-            frame_bytes = await _extrair_frame(file_path, ts)
-            if frame_bytes:
-                frames.append(frame_bytes)
-                logger.info("Frame extraído em %ss (%d bytes)", ts, len(frame_bytes))
-            else:
-                logger.warning("Frame vazio em %ss — nenhuma face nesse momento?", ts)
-        except Exception as e:
-            logger.warning("Falha ao extrair frame em %ss: %s", ts, e)
+    for ts, result in zip(FRAME_TIMESTAMPS, results):
+        if isinstance(result, Exception):
+            logger.warning("Falha ao extrair frame em %ss: %s", ts, result)
+        elif result:
+            frames.append(result)
+            logger.info("Frame extraído em %ss (%d bytes)", ts, len(result))
+        else:
+            logger.warning("Frame vazio em %ss — nenhuma face nesse momento?", ts)
     return frames
 
 

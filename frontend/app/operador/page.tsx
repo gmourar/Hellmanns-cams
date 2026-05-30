@@ -86,6 +86,7 @@ export default function OperadorPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [secondsLeft, setSecondsLeft] = useState(RECORD_SECONDS);
   const [error, setError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
 
   function runCountdown(seconds: number, onTick: (s: number) => void): Promise<void> {
     return new Promise((resolve) => {
@@ -93,13 +94,15 @@ export default function OperadorPage() {
       onTick(s);
       const iv = setInterval(() => {
         s -= 1;
+        onTick(s);  // sempre chama onTick, inclusive no 0
         if (s <= 0) { clearInterval(iv); resolve(); }
-        else onTick(s);
       }, 1000);
     });
   }
 
   async function handleStart() {
+    if (isStarting) return;  // bloqueia duplo clique
+    setIsStarting(true);
     try {
       setError(null);
       // Inicia a sessão imediatamente (agente começa a preparar as câmeras)
@@ -118,6 +121,8 @@ export default function OperadorPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "erro desconhecido");
       setPhase("error");
+    } finally {
+      setIsStarting(false);
     }
   }
 
@@ -126,6 +131,11 @@ export default function OperadorPage() {
       await new Promise((r) => setTimeout(r, 1000));
       try {
         const gallery = await getGallery(id);
+        if (gallery.status === "error") {
+          setError("O agente reportou um erro ao gravar. Verifique as câmeras e tente novamente.");
+          setPhase("error");
+          return;
+        }
         if (gallery.status === "ready" && gallery.videos.length > 0) {
           window.location.assign(`/galeria/${id}`);
           return;
@@ -208,13 +218,15 @@ export default function OperadorPage() {
           <div className="w-full max-w-sm space-y-2">
             <button
               onClick={handleStart}
+              disabled={isStarting}
               className="w-full bg-[#FFD200] text-[#0A0A0A] font-display text-[2.4rem] tracking-[0.15em] py-6 rounded-3xl
                          shadow-[0_0_60px_rgba(255,210,0,0.4),0_4px_20px_rgba(0,0,0,0.5)]
                          hover:shadow-[0_0_90px_rgba(255,210,0,0.6),0_4px_20px_rgba(0,0,0,0.5)]
                          hover:bg-[#ffe033]
-                         active:scale-95 transition-all duration-150 uppercase"
+                         active:scale-95 transition-all duration-150 uppercase
+                         disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
             >
-              INICIAR
+              {isStarting ? "INICIANDO..." : "INICIAR"}
             </button>
             <p className="text-center text-white/15 text-[10px] tracking-[0.35em] uppercase font-body">
               toque para começar

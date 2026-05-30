@@ -14,6 +14,21 @@ DELETE_LOCAL_AFTER_UPLOAD = os.environ.get("DELETE_LOCAL_AFTER_UPLOAD", "true").
     "1", "true", "yes",
 )
 
+_s3_client = None
+
+
+def _s3():
+    global _s3_client
+    if _s3_client is None:
+        import boto3
+        _s3_client = boto3.client(
+            "s3",
+            region_name=S3_REGION,
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        )
+    return _s3_client
+
 
 def _enabled() -> bool:
     flag = os.environ.get("UPLOAD_TO_S3", "").lower()
@@ -44,17 +59,9 @@ def upload_video(local_path: Path, session_id: str, cabine_id: int) -> str:
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET não configurado no .env do agente")
 
-    import boto3
-
     key = object_key(session_id, cabine_id)
-    client = boto3.client(
-        "s3",
-        region_name=S3_REGION,
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    )
     logger.info("S3 upload: %s → s3://%s/%s", local_path.name, S3_BUCKET, key)
-    client.upload_file(
+    _s3().upload_file(
         str(local_path),
         S3_BUCKET,
         key,
