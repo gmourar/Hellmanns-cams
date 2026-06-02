@@ -330,7 +330,7 @@ async def smoke_test():
             continue
         mp4_path = raw_dir / f"cabine_{cabine_id}.mp4"
         try:
-            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id == 1))
+            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id in (1, 3)), hflip=(cabine_id in (1, 3)))
         except Exception as exc:
             logger.error("cabine %d: falha ao gerar MP4: %s", cabine_id, exc)
 

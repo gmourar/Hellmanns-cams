@@ -59,8 +59,13 @@ export interface SessionSummary {
   videos: GalleryVideo[];
 }
 
-export async function getSessions(): Promise<SessionSummary[]> {
-  const r = await fetch(`${API_BASE}/sessions`, { cache: "no-store" });
+export interface SessionsResponse {
+  sessions: SessionSummary[];
+  has_more: boolean;
+}
+
+export async function getSessions(page = 1, limit = 20): Promise<SessionsResponse> {
+  const r = await fetch(`${API_BASE}/sessions?page=${page}&limit=${limit}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`getSessions falhou: ${r.status}`);
   return r.json();
 }

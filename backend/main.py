@@ -304,15 +304,12 @@ async def cabine_qr(session_id: str, cabine_id: int, db: AsyncSession = Depends(
 async def meu_video_qr():
     import qrcode
     import qrcode.image.svg
-    import urllib.parse
 
     frontend_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
     face_scan_url = f"{frontend_url}/meu-video"
-    message = f"Acesse o link para resgatar seu vídeo: {face_scan_url}"
-    whatsapp_url = f"https://wa.me/5511972936666?text={urllib.parse.quote(message)}"
 
     qr = qrcode.QRCode(border=2)
-    qr.add_data(whatsapp_url)
+    qr.add_data(face_scan_url)
     qr.make(fit=True)
     image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
     buffer = io.BytesIO()
@@ -388,19 +385,35 @@ async def buscar_video(body: BuscarVideoRequest):
 # ── List all sessions ─────────────────────────────────────────────────────────
 
 @app.get("/sessions")
-async def list_sessions(db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    db: AsyncSession = Depends(get_db),
+    page: int = 1,
+    limit: int = 20,
+):
+    offset = (page - 1) * limit
     result = await db.execute(
         select(SessionModel)
         .where(SessionModel.status == "ready")
         .order_by(SessionModel.created_at.desc())
+        .offset(offset)
+        .limit(limit + 1)  # +1 to check if there are more
     )
-    sessions = result.scalars().all()
+    sessions_raw = result.scalars().all()
+    has_more = len(sessions_raw) > limit
+    sessions = sessions_raw[:limit]
 
     async def _session_videos(session: SessionModel) -> list[dict]:
-        # Use DB-stored cabine_ids to avoid N+1 S3 head_object calls
-        cabine_ids = session.cabine_ids_list
+        cabine_ids = session.cabine_ids_list or []
+        if cabine_ids:
+            # Verify S3 existence even for stored IDs (handles deleted files)
+            exists_flags = await asyncio.gather(*[
+                storage.video_exists_async(session.session_id, c) for c in cabine_ids
+            ])
+            cabine_ids = [c for c, ok in zip(cabine_ids, exists_flags) if ok]
         if not cabine_ids:
             cabine_ids = await storage.available_cabine_ids_async(session.session_id)
+        if not cabine_ids:
+            return []
         urls = await asyncio.gather(*[
             storage.public_url_async(session.session_id, c) for c in cabine_ids
         ])
@@ -427,7 +440,10 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
             "videos": videos,
         })
 
-    return response
+    # Filter out sessions with deleted/missing videos
+    response = [s for s in response if s["videos"]]
+
+    return {"sessions": response, "has_more": has_more}
 
 
 # ── Video file serving ────────────────────────────────────────────────────────

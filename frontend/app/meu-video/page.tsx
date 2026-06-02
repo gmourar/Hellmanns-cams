@@ -255,6 +255,10 @@ export default function MeuVideoPage() {
                          active:scale-95 transition-all duration-150 uppercase shadow-[0_4px_24px_rgba(0,0,0,0.4)]">
               TENTAR NOVAMENTE
             </button>
+            <a href="/galeria"
+              className="text-white/35 font-body text-xs tracking-widest uppercase hover:text-white/60 transition-colors underline underline-offset-4">
+              Ver galeria completa
+            </a>
           </div>
         )}
       </main>
