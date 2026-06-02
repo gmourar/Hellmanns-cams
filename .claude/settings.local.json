@@ -3,7 +3,8 @@
     "allow": [
       "Bash(curl -s --connect-timeout 5 http://54.233.214.47:8000/health)",
       "Bash(curl -s --connect-timeout 5 http://54.233.214.47:8000)",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(cat \"C:/Users/ferna/OneDrive/Desktop/Hellmanns cam/3cam/agent/src\"/*.py)"
     ]
   }
 }

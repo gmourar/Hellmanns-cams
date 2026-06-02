@@ -173,6 +173,21 @@ async def agent_ack(
     return {"ok": True}
 
 
+@app.get("/agent/sessions/current")
+async def agent_current_session(db: AsyncSession = Depends(get_db), _=Depends(verify_agent)):
+    """Retorna a sessão mais recente em status 'recording', sem consumir a fila."""
+    result = await db.execute(
+        select(SessionModel)
+        .where(SessionModel.status == "recording")
+        .order_by(SessionModel.created_at.desc())
+        .limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        return Response(status_code=204)
+    return {"session_id": session.session_id}
+
+
 @app.get("/agent/poll")
 async def agent_poll(_=Depends(verify_agent)):
     command = await q_module.wait(timeout=30.0)

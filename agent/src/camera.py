@@ -331,18 +331,24 @@ def record_one_camera(
 
     # Serializar close+open: EDSDK não suporta operações de sessão simultâneas
     # em múltiplas câmeras — sem o lock, 3 câmeras em paralelo causam 0x000000C0.
+    logger.info("cabine %d: aguardando lock de sessão...", camera.cabine_id)
     with _session_lock:
-        try:
-            sdk.EdsCloseSession(cam_ref)
-        except Exception:
-            pass
+        logger.info("cabine %d: lock adquirido — fechando sessão...", camera.cabine_id)
+        err_close = sdk.EdsCloseSession(cam_ref)
+        if err_close == 0x00000000:
+            logger.info("cabine %d: EdsCloseSession → OK (0x00000000) — aguardando 2s...", camera.cabine_id)
+        else:
+            logger.warning("cabine %d: EdsCloseSession → 0x%08X (sessão já fechada?) — aguardando 2s...", camera.cabine_id, err_close)
         time.sleep(2.0)
         import gc; gc.collect()
+        logger.info("cabine %d: abrindo sessão...", camera.cabine_id)
         if not _open_session_with_retry(sdk, cam_ref):
             raise RuntimeError(f"cabine {camera.cabine_id}: cannot open session")
+        logger.info("cabine %d: sessão aberta — liberando lock", camera.cabine_id)
 
     try:
         # Enable live view and wait for Movie Standby
+        logger.info("cabine %d: habilitando EVF / aguardando standby de vídeo...", camera.cabine_id)
         result_holder = [False]
         def _evf():
             result_holder[0] = _enable_liveview_and_wait_standby(sdk, cam_ref, timeout=5.0)
@@ -350,10 +356,14 @@ def record_one_camera(
         t.start()
         t.join(timeout=8.0)
         if not result_holder[0]:
-            logger.warning("cabine %d: EVF standby timeout — proceeding anyway", camera.cabine_id)
+            logger.warning("cabine %d: EVF standby timeout — prosseguindo mesmo assim", camera.cabine_id)
+        else:
+            logger.info("cabine %d: EVF standby OK", camera.cabine_id)
 
         # Snapshot existing SD files
+        logger.info("cabine %d: mapeando arquivos existentes no SD...", camera.cabine_id)
         known_files = _snapshot_sd_files(sdk, cam_ref)
+        logger.info("cabine %d: SD mapeado (%d arquivo(s) existentes)", camera.cabine_id, len(known_files))
 
         if prep_delay > 0:
             logger.info(
@@ -386,22 +396,30 @@ def record_one_camera(
 
         # Wait for SD card to finalize the video file internally.
         # 8 s cobre o caso da T5i ainda estar escrevendo o footer do MOV/MP4.
+        logger.info("cabine %d: aguardando 8s para SD finalizar escrita do arquivo...", camera.cabine_id)
         time.sleep(8.0)
+        logger.info("cabine %d: SD pronto para leitura", camera.cabine_id)
 
     finally:
         with _session_lock:
+            logger.info("cabine %d: fechando sessão pós-gravação...", camera.cabine_id)
             sdk.EdsCloseSession(cam_ref)
 
     # Reopen to read the new file from SD (serializado para evitar contenção)
+    logger.info("cabine %d: aguardando 1.5s e reabrindo sessão para download...", camera.cabine_id)
     time.sleep(1.5)
     with _session_lock:
+        logger.info("cabine %d: abrindo sessão para download...", camera.cabine_id)
         if not _open_session_with_retry(sdk, cam_ref):
             raise RuntimeError(f"cabine {camera.cabine_id}: cannot reopen session for download")
+        logger.info("cabine %d: sessão de download aberta", camera.cabine_id)
 
     try:
+        logger.info("cabine %d: procurando novo arquivo de vídeo no SD...", camera.cabine_id)
         item_ref, fname, size = _find_new_video(sdk, cam_ref, known_files)
         if item_ref is None:
             raise RuntimeError(f"cabine {camera.cabine_id}: new video file not found on SD")
+        logger.info("cabine %d: arquivo encontrado: %s (%.1f MB)", camera.cabine_id, fname, size / 1_048_576)
 
         out_path = dest_dir / f"cabine_{camera.cabine_id}_raw{Path(fname).suffix}"
         stream_ref = EdsBaseRef()
@@ -412,6 +430,7 @@ def record_one_camera(
             raise RuntimeError(f"cabine {camera.cabine_id}: EdsCreateFileStream failed 0x{err:08X}")
 
         try:
+            logger.info("cabine %d: baixando %s para disco...", camera.cabine_id, fname)
             err = sdk.EdsDownload(item_ref, size, stream_ref)
             if err != EDS_ERR_OK:
                 sdk.EdsDownloadCancel(item_ref)
