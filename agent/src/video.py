@@ -13,7 +13,7 @@ FFMPEG_CRF = os.environ.get("FFMPEG_CRF", "24")
 
 # Moldura PNG com transparência — sobreposta ao vídeo processado.
 # Padrão: moldura_transparente.png na raiz do projeto (um nível acima de agent/).
-_default_overlay = str(Path(__file__).parent.parent.parent / "moldura_transparente.png")
+_default_overlay = str(Path(__file__).parent.parent.parent / "moldura_ativacao_squeeze+bolinha_V008 (1).png")
 OVERLAY_PATH = os.environ.get("OVERLAY_PATH", _default_overlay)
 
 
@@ -63,12 +63,14 @@ async def process_video(
     ffmpeg_path: str = "ffmpeg",
     video_speed: float = 0.75,
     vflip: bool = False,
+    hflip: bool = False,
 ) -> Path:
     """
     Async wrapper around FFmpeg pipeline:
     - Apply playback speed to the full clip
     - Transpose (rotate 90° for vertical mount) + crop to 9:16
-    - Optional vertical flip (vflip=True) for cameras mounted upside-down
+    - Optional flip: vflip=True (câmera virada para baixo), hflip=True (espelhada).
+      vflip+hflip juntos = rotação 180° (câmera montada de ponta-cabeça E invertida).
     - Overlay moldura PNG on top (alpha blending) if OVERLAY_PATH exists
     - Encode H.264 + AAC
     Returns output path.
@@ -80,7 +82,7 @@ async def process_video(
     atempo = _atempo_chain(video_speed)
     pts_multiplier = 1.0 / video_speed
     portrait = _portrait_filter()
-    flip = "vflip," if vflip else ""
+    flip = ("vflip," if vflip else "") + ("hflip," if hflip else "")
     w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
 
     overlay_file = Path(OVERLAY_PATH) if OVERLAY_PATH else None

@@ -87,11 +87,10 @@ async def _upload_with_retry(upload_fn, out_path, session_id, cabine_id):
     raise last_exc
 
 
-async def handle_record(sdk, session_id: str):
-    from src.camera import detect_cameras, record_all_cameras
+async def handle_record(sdk, cameras: list, session_id: str):
+    from src.camera import record_all_cameras
     from src.video import process_video
 
-    cameras = detect_cameras(sdk, SERIAL_TO_CABINE)
     if not cameras:
         detail = (
             "Nenhuma câmera mapeada. Conecte as câmeras USB e atualize "
@@ -135,7 +134,11 @@ async def handle_record(sdk, session_id: str):
             raw_path = result
             out_path = out_dir / f"cabine_{cabine_id}.mp4"
             try:
-                await process_video(raw_path, out_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id == 1))
+                await process_video(
+                    raw_path, out_path, FFMPEG_PATH, VIDEO_SPEED,
+                    vflip=(cabine_id in (1, 3)),
+                    hflip=(cabine_id in (1, 3)),
+                )
 
                 if not out_path.exists() or out_path.stat().st_size == 0:
                     errors.append(f"cabine {cabine_id}: vídeo de saída vazio ou ausente")
@@ -214,6 +217,14 @@ async def poll_loop(sdk, cameras):
                     timeout=35.0,
                 )
                 if resp.status_code == 204:
+                    # Keepalive: leitura leve para evitar timeout de sessão PTP
+                    # na câmera (~30-40 s na T5i). Falhas ignoradas silenciosamente.
+                    from src.camera import keepalive
+                    for _, cam_ref in cameras:
+                        try:
+                            keepalive(sdk, cam_ref)
+                        except Exception:
+                            pass
                     continue
                 if resp.status_code == 200:
                     command = resp.json()
@@ -224,7 +235,7 @@ async def poll_loop(sdk, cameras):
                         await _ack_session(session_id)
                         try:
                             await asyncio.wait_for(
-                                handle_record(sdk, session_id),
+                                handle_record(sdk, cameras, session_id),
                                 timeout=HANDLE_TIMEOUT,
                             )
                         except asyncio.TimeoutError:
@@ -332,6 +343,9 @@ def main():
     try:
         asyncio.run(poll_loop(sdk, cameras))
     finally:
+        for _, cam_ref in cameras:
+            sdk.EdsCloseSession(cam_ref)
+            sdk.EdsRelease(cam_ref)
         sdk.EdsTerminateSDK()
 
 

@@ -41,7 +41,11 @@ function groupByDay(sessions: SessionSummary[]): DayGroup[] {
 export default async function GaleriaIndexPage() {
   let sessions: SessionSummary[] = [];
   try {
-    sessions = await getSessions();
+    const all = await getSessions();
+    // Ordenar da mais recente para mais antiga e manter apenas as 3 últimas sessões
+    sessions = all
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 3);
   } catch {
     // mostra lista vazia em caso de erro
   }

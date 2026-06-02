@@ -5,9 +5,14 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Lock global: EDSDK/USB não suporta EdsOpenSession/EdsCloseSession simultâneos
+# em múltiplas câmeras — serializar evita 0x000000C0 por contenção de barramento.
+_session_lock = threading.Lock()
+
 # ── EDSDK constants ──────────────────────────────────────────────────────────
-EDS_ERR_OK          = 0x00000000
-EDS_ERR_DEVICE_BUSY = 0x00000083
+EDS_ERR_OK                   = 0x00000000
+EDS_ERR_DEVICE_BUSY          = 0x00000083
+EDS_ERR_SESSION_ALREADY_OPEN = 0x00000021
 
 kEdsPropID_BodyIDEx         = 0x00000015
 kEdsPropID_Evf_OutputDevice = 0x00000500
@@ -105,7 +110,7 @@ def setup_sdk_signatures(sdk: ctypes.CDLL) -> None:
 def _open_session_with_retry(sdk, cam_ref, max_tries=5) -> bool:
     for attempt in range(max_tries):
         err = sdk.EdsOpenSession(cam_ref)
-        if err == EDS_ERR_OK:
+        if err == EDS_ERR_OK or err == EDS_ERR_SESSION_ALREADY_OPEN:
             return True
         logger.warning("EdsOpenSession attempt %d failed: 0x%08X", attempt + 1, err)
         time.sleep(2.0)
@@ -282,6 +287,17 @@ def _stop_recording_with_retry(sdk, cam_ref, max_tries=20) -> bool:
     return False
 
 
+def keepalive(sdk, cam_ref) -> None:
+    """Envia um comando PTP leve para evitar que a câmera feche a sessão por inatividade.
+    Chamado pelo poll_loop a cada resposta 204 (sem comando pendente).
+    Falhas são ignoradas silenciosamente (sessão pode não estar aberta ainda).
+    """
+    prop_type = ctypes.c_uint32()
+    prop_size = ctypes.c_uint32()
+    sdk.EdsGetPropertySize(cam_ref, kEdsPropID_BodyIDEx, 0,
+                           ctypes.byref(prop_type), ctypes.byref(prop_size))
+
+
 def _find_new_video(sdk, cam_ref, known_files: set):
     """Returns (item_ref, filename, size) for the first new video file found."""
     count = ctypes.c_int32(0)
@@ -313,9 +329,17 @@ def record_one_camera(
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Open session
-    if not _open_session_with_retry(sdk, cam_ref):
-        raise RuntimeError(f"cabine {camera.cabine_id}: cannot open session")
+    # Serializar close+open: EDSDK não suporta operações de sessão simultâneas
+    # em múltiplas câmeras — sem o lock, 3 câmeras em paralelo causam 0x000000C0.
+    with _session_lock:
+        try:
+            sdk.EdsCloseSession(cam_ref)
+        except Exception:
+            pass
+        time.sleep(2.0)
+        import gc; gc.collect()
+        if not _open_session_with_retry(sdk, cam_ref):
+            raise RuntimeError(f"cabine {camera.cabine_id}: cannot open session")
 
     try:
         # Enable live view and wait for Movie Standby
@@ -360,16 +384,19 @@ def record_one_camera(
             raise RuntimeError(f"cabine {camera.cabine_id}: could not stop recording")
         logger.info("Gravação parada: cabine %d", camera.cabine_id)
 
-        # Wait for SD to finalize file
-        time.sleep(5.0)
+        # Wait for SD card to finalize the video file internally.
+        # 8 s cobre o caso da T5i ainda estar escrevendo o footer do MOV/MP4.
+        time.sleep(8.0)
 
     finally:
-        sdk.EdsCloseSession(cam_ref)
+        with _session_lock:
+            sdk.EdsCloseSession(cam_ref)
 
-    # Reopen session to refresh directory listing
-    time.sleep(2.0)
-    if not _open_session_with_retry(sdk, cam_ref):
-        raise RuntimeError(f"cabine {camera.cabine_id}: cannot reopen session for download")
+    # Reopen to read the new file from SD (serializado para evitar contenção)
+    time.sleep(1.5)
+    with _session_lock:
+        if not _open_session_with_retry(sdk, cam_ref):
+            raise RuntimeError(f"cabine {camera.cabine_id}: cannot reopen session for download")
 
     try:
         item_ref, fname, size = _find_new_video(sdk, cam_ref, known_files)
@@ -398,9 +425,12 @@ def record_one_camera(
         logger.info("Download completo: cabine_%d_raw%s (%.1f MB)",
                     camera.cabine_id, Path(fname).suffix, size_mb)
         return out_path
-
     finally:
-        sdk.EdsCloseSession(cam_ref)
+        with _session_lock:
+            # Fechar é obrigatório: completa o handshake PTP do download.
+            sdk.EdsCloseSession(cam_ref)
+            # Reabrir para segurar o dispositivo antes do Windows MTP reivindicá-lo.
+            _open_session_with_retry(sdk, cam_ref)
 
 
 async def record_all_cameras(
