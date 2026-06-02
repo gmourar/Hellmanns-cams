@@ -331,6 +331,48 @@ def main():
         asyncio.run(smoke_test())
         return
 
+    # ── Modo --session: executa UMA sessão e encerra ──────────────────────────
+    # Chamado pelo runner.py. Agente é "burro": recebe session_id, grava, sobe
+    # para S3, chama /complete e morre. O runner cuida do ciclo de vida.
+    if "--session" in sys.argv:
+        idx = sys.argv.index("--session")
+        session_id = sys.argv[idx + 1]
+
+        logger.info("=" * 60)
+        logger.info("[AGENT] Modo --session: %s", session_id)
+        logger.info("[AGENT] Este processo executa UMA sessão e encerra.")
+        logger.info("=" * 60)
+
+        logger.info("[AGENT] Inicializando SDK e detectando câmeras...")
+        sdk, cameras = _load_cameras()
+
+        if not cameras:
+            logger.error("[AGENT] Nenhuma câmera pronta. Encerrando com erro (código 1).")
+            sdk.EdsTerminateSDK()
+            sys.exit(1)
+
+        logger.info("[AGENT] %d câmera(s) prontas. Iniciando gravação da sessão %s...", len(cameras), session_id)
+        exit_code = 0
+        try:
+            asyncio.run(handle_record(sdk, cameras, session_id))
+            logger.info("[AGENT] Sessão %s concluída com sucesso.", session_id)
+        except Exception as exc:
+            logger.error("[AGENT] Sessão %s falhou: %s", session_id, exc)
+            exit_code = 1
+        finally:
+            logger.info("[AGENT] Liberando recursos EDSDK...")
+            for _, cam_ref in cameras:
+                try:
+                    sdk.EdsCloseSession(cam_ref)
+                    sdk.EdsRelease(cam_ref)
+                except Exception:
+                    pass
+            sdk.EdsTerminateSDK()
+            logger.info("[AGENT] SDK terminado. Processo encerrando (código %d).", exit_code)
+
+        sys.exit(exit_code)
+
+    # ── Modo poll_loop: loop eterno (uso standalone sem runner) ───────────────
     sdk, cameras = _load_cameras()
     if not cameras:
         logger.error(

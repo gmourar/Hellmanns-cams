@@ -107,12 +107,24 @@ def setup_sdk_signatures(sdk: ctypes.CDLL) -> None:
                                          ctypes.POINTER(EdsBaseRef)]
 
 
-def _open_session_with_retry(sdk, cam_ref, max_tries=5) -> bool:
+def _open_session_with_retry(sdk, cam_ref, max_tries=20) -> bool:
+    # 20 tentativas × 2s = até 40s de espera.
+    # Câmeras Canon T5i precisam de ~30s após fechar sessão (detect_cameras)
+    # antes de aceitar um novo EdsOpenSession. Com o poll_loop esse tempo vem
+    # naturalmente do long-poll de 30s do servidor. Quando o comando já está
+    # na fila (sessão pré-enfileirada), o retry aqui garante a espera necessária.
     for attempt in range(max_tries):
         err = sdk.EdsOpenSession(cam_ref)
         if err == EDS_ERR_OK or err == EDS_ERR_SESSION_ALREADY_OPEN:
+            if attempt > 0:
+                logger.info("EdsOpenSession OK na tentativa %d", attempt + 1)
             return True
-        logger.warning("EdsOpenSession attempt %d failed: 0x%08X", attempt + 1, err)
+        if attempt < 3:
+            logger.warning("EdsOpenSession tentativa %d falhou: 0x%08X", attempt + 1, err)
+        elif attempt == 3:
+            logger.warning("EdsOpenSession tentativa %d falhou: 0x%08X — câmera estabilizando USB, aguardando...", attempt + 1, err)
+        else:
+            logger.info("EdsOpenSession aguardando câmera... (tentativa %d/%d, 0x%08X)", attempt + 1, max_tries, err)
         time.sleep(2.0)
     return False
 
@@ -331,16 +343,13 @@ def record_one_camera(
 
     # Serializar close+open: EDSDK não suporta operações de sessão simultâneas
     # em múltiplas câmeras — sem o lock, 3 câmeras em paralelo causam 0x000000C0.
+    # Processo sempre começa limpo (runner matou o anterior antes de chegar aqui).
+    # Sem close preventivo — apenas abrimos. O sleep dá tempo ao driver USB Canon
+    # de terminar a enumeração dos dispositivos após EdsInitializeSDK().
     logger.info("cabine %d: aguardando lock de sessão...", camera.cabine_id)
     with _session_lock:
-        logger.info("cabine %d: lock adquirido — fechando sessão...", camera.cabine_id)
-        err_close = sdk.EdsCloseSession(cam_ref)
-        if err_close == 0x00000000:
-            logger.info("cabine %d: EdsCloseSession → OK (0x00000000) — aguardando 2s...", camera.cabine_id)
-        else:
-            logger.warning("cabine %d: EdsCloseSession → 0x%08X (sessão já fechada?) — aguardando 2s...", camera.cabine_id, err_close)
+        logger.info("cabine %d: lock adquirido — aguardando enumeração USB (2s)...", camera.cabine_id)
         time.sleep(2.0)
-        import gc; gc.collect()
         logger.info("cabine %d: abrindo sessão...", camera.cabine_id)
         if not _open_session_with_retry(sdk, cam_ref):
             raise RuntimeError(f"cabine {camera.cabine_id}: cannot open session")
