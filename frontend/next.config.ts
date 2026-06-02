@@ -1,8 +1,19 @@
 import type { NextConfig } from "next";
 
+const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
+
 const nextConfig: NextConfig = {
-  // Allow <Image> to load from the local /public folder without extra config.
-  // Add remote patterns here if you need to load images from external URLs.
+  async rewrites() {
+    return [
+      { source: "/operator/:path*",  destination: `${BACKEND}/operator/:path*`  },
+      { source: "/agent/:path*",     destination: `${BACKEND}/agent/:path*`      },
+      { source: "/gallery/:path*",   destination: `${BACKEND}/gallery/:path*`    },
+      { source: "/videos/:path*",    destination: `${BACKEND}/videos/:path*`     },
+      { source: "/sessions",         destination: `${BACKEND}/sessions`          },
+      { source: "/buscar-video",     destination: `${BACKEND}/buscar-video`      },
+      { source: "/meu-video/:path*", destination: `${BACKEND}/meu-video/:path*`  },
+    ];
+  },
 };
 
 export default nextConfig;

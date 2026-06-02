@@ -5,10 +5,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Lock global: EDSDK/USB não suporta EdsOpenSession/EdsCloseSession simultâneos
-# em múltiplas câmeras — serializar evita 0x000000C0 por contenção de barramento.
-_session_lock = threading.Lock()
-
 # ── EDSDK constants ──────────────────────────────────────────────────────────
 EDS_ERR_OK                   = 0x00000000
 EDS_ERR_DEVICE_BUSY          = 0x00000083
@@ -125,7 +121,7 @@ def _open_session_with_retry(sdk, cam_ref, max_tries=20) -> bool:
             logger.warning("EdsOpenSession tentativa %d falhou: 0x%08X — câmera estabilizando USB, aguardando...", attempt + 1, err)
         else:
             logger.info("EdsOpenSession aguardando câmera... (tentativa %d/%d, 0x%08X)", attempt + 1, max_tries, err)
-        time.sleep(2.0)
+        time.sleep(3.0)
     return False
 
 
@@ -288,16 +284,6 @@ def _enable_liveview_and_wait_standby(sdk, cam_ref, timeout=5.0) -> bool:
     return False
 
 
-def _stop_recording_with_retry(sdk, cam_ref, max_tries=20) -> bool:
-    val = ctypes.c_uint32(RECORD_END)
-    for attempt in range(max_tries):
-        err = sdk.EdsSetPropertyData(cam_ref, kEdsPropID_Record, 0, 4, ctypes.byref(val))
-        if err == EDS_ERR_OK:
-            return True
-        logger.warning("Stop recording attempt %d failed: 0x%08X", attempt + 1, err)
-        time.sleep(attempt * 0.5)
-    return False
-
 
 def keepalive(sdk, cam_ref) -> None:
     """Envia um comando PTP leve para evitar que a câmera feche a sessão por inatividade.
@@ -337,23 +323,16 @@ def record_one_camera(
 ) -> Path:
     """
     Blocking. Runs in a thread. Returns path to downloaded raw video.
-    Raises on unrecoverable error.
+    Raises on any error — runner kills the process and retries.
+    Tentativa única: sem lock, sem retry. Simplicidade extrema.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Serializar close+open: EDSDK não suporta operações de sessão simultâneas
-    # em múltiplas câmeras — sem o lock, 3 câmeras em paralelo causam 0x000000C0.
-    # Processo sempre começa limpo (runner matou o anterior antes de chegar aqui).
-    # Sem close preventivo — apenas abrimos. O sleep dá tempo ao driver USB Canon
-    # de terminar a enumeração dos dispositivos após EdsInitializeSDK().
-    logger.info("cabine %d: aguardando lock de sessão...", camera.cabine_id)
-    with _session_lock:
-        logger.info("cabine %d: lock adquirido — aguardando enumeração USB (2s)...", camera.cabine_id)
-        time.sleep(2.0)
-        logger.info("cabine %d: abrindo sessão...", camera.cabine_id)
-        if not _open_session_with_retry(sdk, cam_ref):
-            raise RuntimeError(f"cabine {camera.cabine_id}: cannot open session")
-        logger.info("cabine %d: sessão aberta — liberando lock", camera.cabine_id)
+    # Tentativa única de abrir sessão. Se falhar, levanta exceção imediatamente.
+    err = sdk.EdsOpenSession(cam_ref)
+    if err != EDS_ERR_OK and err != EDS_ERR_SESSION_ALREADY_OPEN:
+        raise RuntimeError(f"cabine {camera.cabine_id}: EdsOpenSession failed 0x{err:08X}")
+    logger.info("cabine %d: sessão aberta", camera.cabine_id)
 
     try:
         # Enable live view and wait for Movie Standby
@@ -398,30 +377,29 @@ def record_one_camera(
         logger.info("cabine %d: gravando %.1fs", camera.cabine_id, duration_s)
         time.sleep(duration_s)
 
-        # Stop recording with retry
-        if not _stop_recording_with_retry(sdk, cam_ref):
-            raise RuntimeError(f"cabine {camera.cabine_id}: could not stop recording")
+        # Stop recording — tentativa única
+        val_end = ctypes.c_uint32(RECORD_END)
+        err = sdk.EdsSetPropertyData(cam_ref, kEdsPropID_Record, 0, 4, ctypes.byref(val_end))
+        if err != EDS_ERR_OK:
+            raise RuntimeError(f"cabine {camera.cabine_id}: stop recording failed 0x{err:08X}")
         logger.info("Gravação parada: cabine %d", camera.cabine_id)
 
         # Wait for SD card to finalize the video file internally.
-        # 8 s cobre o caso da T5i ainda estar escrevendo o footer do MOV/MP4.
         logger.info("cabine %d: aguardando 8s para SD finalizar escrita do arquivo...", camera.cabine_id)
         time.sleep(8.0)
         logger.info("cabine %d: SD pronto para leitura", camera.cabine_id)
 
     finally:
-        with _session_lock:
-            logger.info("cabine %d: fechando sessão pós-gravação...", camera.cabine_id)
-            sdk.EdsCloseSession(cam_ref)
+        sdk.EdsCloseSession(cam_ref)
+        logger.info("cabine %d: sessão fechada pós-gravação", camera.cabine_id)
 
-    # Reopen to read the new file from SD (serializado para evitar contenção)
-    logger.info("cabine %d: aguardando 1.5s e reabrindo sessão para download...", camera.cabine_id)
+    # Reopen to read the new file from SD — tentativa única
+    logger.info("cabine %d: aguardando 1.5s e reabrindo para download...", camera.cabine_id)
     time.sleep(1.5)
-    with _session_lock:
-        logger.info("cabine %d: abrindo sessão para download...", camera.cabine_id)
-        if not _open_session_with_retry(sdk, cam_ref):
-            raise RuntimeError(f"cabine {camera.cabine_id}: cannot reopen session for download")
-        logger.info("cabine %d: sessão de download aberta", camera.cabine_id)
+    err = sdk.EdsOpenSession(cam_ref)
+    if err != EDS_ERR_OK and err != EDS_ERR_SESSION_ALREADY_OPEN:
+        raise RuntimeError(f"cabine {camera.cabine_id}: EdsOpenSession (download) failed 0x{err:08X}")
+    logger.info("cabine %d: sessão de download aberta", camera.cabine_id)
 
     try:
         logger.info("cabine %d: procurando novo arquivo de vídeo no SD...", camera.cabine_id)
@@ -432,7 +410,6 @@ def record_one_camera(
 
         out_path = dest_dir / f"cabine_{camera.cabine_id}_raw{Path(fname).suffix}"
         stream_ref = EdsBaseRef()
-        # EdsCreateFileStream flags: kEdsFileCreateDisposition_CreateAlways=1, kEdsAccess_ReadWrite=2
         err = sdk.EdsCreateFileStream(str(out_path).encode(), 1, 2, ctypes.byref(stream_ref))
         if err != EDS_ERR_OK:
             sdk.EdsRelease(item_ref)
@@ -454,14 +431,11 @@ def record_one_camera(
                     camera.cabine_id, Path(fname).suffix, size_mb)
         return out_path
     finally:
-        with _session_lock:
-            # Fechar é obrigatório: completa o handshake PTP do download.
-            sdk.EdsCloseSession(cam_ref)
-            # Reabrir para segurar o dispositivo antes do Windows MTP reivindicá-lo.
-            _open_session_with_retry(sdk, cam_ref)
+        sdk.EdsCloseSession(cam_ref)
+        logger.info("cabine %d: sessão de download fechada", camera.cabine_id)
 
 
-async def record_all_cameras(
+def record_all_cameras_sync(
     sdk,
     cameras: list,
     duration_s: float,
@@ -470,22 +444,125 @@ async def record_all_cameras(
     start_settle: float = 0.0,
 ) -> dict:
     """
-    Runs record_one_camera for each camera in parallel threads.
-    Returns dict {cabine_id: Path | Exception}.
+    Grava todas as câmeras em sequência na MESMA THREAD que chama esta função.
+    Sem sub-threads — garante thread affinity do EDSDK.
+    Retorna dict {cabine_id: Path | Exception}.
+
+    Início de gravação é sequencial mas rápido (<100ms por câmera),
+    portanto os vídeos ficam sincronizados na prática.
     """
-    import asyncio
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
-    async def _one(sdk, cam_ref, cam):
+    # ── Fase 1: abrir sessões (detect_cameras fechou, agora reabrimos) ─────────
+    active = []  # [(cam, cam_ref)]
+    for cam, cam_ref in cameras:
+        err = sdk.EdsOpenSession(cam_ref)
+        if err != EDS_ERR_OK and err != EDS_ERR_SESSION_ALREADY_OPEN:
+            logger.error("cabine %d: EdsOpenSession failed 0x%08X — pulando", cam.cabine_id, err)
+            continue
+        logger.info("cabine %d: sessão aberta", cam.cabine_id)
+        active.append((cam, cam_ref))
+
+    if not active:
+        return {cam.cabine_id: RuntimeError("EdsOpenSession failed") for cam, _ in cameras}
+
+    # ── Fase 2: EVF + snapshot SD ────────────────────────────────────────────
+    known_files: dict[int, set] = {}
+    setup_failed: list[int] = []
+    for cam, cam_ref in active:
+        ok = _enable_liveview_and_wait_standby(sdk, cam_ref, timeout=5.0)
+        if not ok:
+            logger.warning("cabine %d: EVF timeout — prosseguindo", cam.cabine_id)
+        else:
+            logger.info("cabine %d: EVF OK", cam.cabine_id)
+        known_files[cam.cabine_id] = _snapshot_sd_files(sdk, cam_ref)
+        logger.info("cabine %d: SD mapeado (%d arquivo(s))", cam.cabine_id, len(known_files[cam.cabine_id]))
+
+    ready = [(cam, cam_ref) for cam, cam_ref in active if cam.cabine_id not in setup_failed]
+
+    if prep_delay > 0:
+        logger.info("Aguardando %.1fs antes de gravar...", prep_delay)
+        time.sleep(prep_delay)
+
+    # ── Fase 3: iniciar TODAS as gravações (sequencial rápido) ───────────────
+    val_begin = ctypes.c_uint32(RECORD_BEGIN)
+    recording = []
+    for cam, cam_ref in ready:
+        err = sdk.EdsSetPropertyData(cam_ref, kEdsPropID_Record, 0, 4, ctypes.byref(val_begin))
+        if err == EDS_ERR_OK:
+            logger.info("Gravação iniciada: cabine %d", cam.cabine_id)
+            recording.append((cam, cam_ref))
+        else:
+            logger.error("cabine %d: Record=4 falhou 0x%08X", cam.cabine_id, err)
+
+    if not recording:
+        return {cam.cabine_id: RuntimeError("Record=4 falhou") for cam, _ in ready}
+
+    if start_settle > 0:
+        time.sleep(start_settle)
+
+    logger.info("Gravando %.1fs...", duration_s)
+    time.sleep(duration_s)
+
+    # ── Fase 4: parar TODAS as gravações ─────────────────────────────────────
+    val_end = ctypes.c_uint32(RECORD_END)
+    for cam, cam_ref in recording:
+        err = sdk.EdsSetPropertyData(cam_ref, kEdsPropID_Record, 0, 4, ctypes.byref(val_end))
+        if err == EDS_ERR_OK:
+            logger.info("Gravação parada: cabine %d", cam.cabine_id)
+        else:
+            logger.warning("cabine %d: stop failed 0x%08X", cam.cabine_id, err)
+
+    logger.info("Aguardando 8s para SD finalizar escrita...")
+    time.sleep(8.0)
+
+    # ── Fase 5: download de cada câmera (sequencial, mesma thread) ───────────
+    results: dict = {}
+    for cam, cam_ref in recording:
         try:
-            path = await asyncio.to_thread(
-                record_one_camera, sdk, cam_ref, cam, duration_s, dest_dir,
-                prep_delay, start_settle,
-            )
-            return cam.cabine_id, path
-        except Exception as exc:
-            logger.error("cabine %d failed: %s", cam.cabine_id, exc)
-            return cam.cabine_id, exc
+            sdk.EdsCloseSession(cam_ref)
+            logger.info("cabine %d: sessão fechada pós-gravação", cam.cabine_id)
+            time.sleep(1.5)
 
-    tasks = [_one(sdk, cam_ref, cam) for cam, cam_ref in cameras]
-    results_list = await asyncio.gather(*tasks)
-    return dict(results_list)
+            err = sdk.EdsOpenSession(cam_ref)
+            if err != EDS_ERR_OK and err != EDS_ERR_SESSION_ALREADY_OPEN:
+                raise RuntimeError(f"EdsOpenSession (download) failed 0x{err:08X}")
+            logger.info("cabine %d: sessão de download aberta", cam.cabine_id)
+
+            item_ref, fname, size = _find_new_video(sdk, cam_ref, known_files[cam.cabine_id])
+            if item_ref is None:
+                raise RuntimeError("video not found on SD")
+            logger.info("cabine %d: arquivo %s (%.1f MB)", cam.cabine_id, fname, size / 1_048_576)
+
+            out_path = dest_dir / f"cabine_{cam.cabine_id}_raw{Path(fname).suffix}"
+            stream_ref = EdsBaseRef()
+            err = sdk.EdsCreateFileStream(str(out_path).encode(), 1, 2, ctypes.byref(stream_ref))
+            if err != EDS_ERR_OK:
+                sdk.EdsRelease(item_ref)
+                raise RuntimeError(f"EdsCreateFileStream failed 0x{err:08X}")
+            try:
+                logger.info("cabine %d: baixando %s...", cam.cabine_id, fname)
+                err = sdk.EdsDownload(item_ref, size, stream_ref)
+                if err != EDS_ERR_OK:
+                    sdk.EdsDownloadCancel(item_ref)
+                    raise RuntimeError(f"EdsDownload failed 0x{err:08X}")
+                sdk.EdsDownloadComplete(item_ref)
+            finally:
+                sdk.EdsRelease(stream_ref)
+                sdk.EdsRelease(item_ref)
+
+            sdk.EdsCloseSession(cam_ref)
+            logger.info("cabine %d: download completo (%.1f MB)", cam.cabine_id, out_path.stat().st_size / 1_048_576)
+            results[cam.cabine_id] = out_path
+
+        except Exception as exc:
+            logger.error("cabine %d falhou: %s", cam.cabine_id, exc)
+            results[cam.cabine_id] = exc
+
+    # câmeras que nem chegaram a gravar
+    recorded_ids = {cam.cabine_id for cam, _ in recording}
+    for cam, _ in cameras:
+        if cam.cabine_id not in results and cam.cabine_id not in recorded_ids:
+            results[cam.cabine_id] = RuntimeError("câmera não gravou")
+
+    return results

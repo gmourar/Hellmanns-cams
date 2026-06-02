@@ -87,26 +87,13 @@ async def _upload_with_retry(upload_fn, out_path, session_id, cabine_id):
     raise last_exc
 
 
-async def handle_record(sdk, cameras: list, session_id: str):
-    from src.camera import record_all_cameras
+async def handle_record(session_id: str):
+    """
+    Roda toda a operação EDSDK (detect + gravar + download) em UMA ÚNICA thread
+    via asyncio.to_thread. Garante thread affinity do EDSDK.
+    """
+    from src.camera import load_sdk, detect_cameras, record_all_cameras_sync
     from src.video import process_video
-
-    if not cameras:
-        detail = (
-            "Nenhuma câmera mapeada. Conecte as câmeras USB e atualize "
-            "SERIAL_TO_CABINE em agent/.env (rode: python -m src.agent --smoke-test)."
-        )
-        logger.error("Session %s: %s", session_id, detail)
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{API_BASE_URL}/agent/sessions/{session_id}/complete",
-                json={"status": "error", "detail": detail},
-                headers=HEADERS,
-                timeout=10,
-            )
-        return
-
-    logger.info("Session %s: gravando com %d câmera(s)", session_id, len(cameras))
 
     work_dir = RAW_DIR / session_id
     raw_dir = work_dir / "raw"
@@ -114,17 +101,45 @@ async def handle_record(sdk, cameras: list, session_id: str):
     out_dir = work_dir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    def _sdk_work():
+        """Tudo que usa EDSDK roda nesta função — garante mesma thread."""
+        sdk = load_sdk()
+        sdk.EdsInitializeSDK()
+        try:
+            cameras = detect_cameras(sdk, SERIAL_TO_CABINE)
+            if not cameras:
+                return None, (
+                    "Nenhuma câmera mapeada. Conecte as câmeras USB e atualize "
+                    "SERIAL_TO_CABINE em agent/.env."
+                )
+            logger.info("Session %s: gravando com %d câmera(s)", session_id, len(cameras))
+            results = record_all_cameras_sync(
+                sdk, cameras, RECORD_DURATION, raw_dir,
+                prep_delay=RECORD_PREP_DELAY,
+                start_settle=RECORD_START_SETTLE,
+            )
+            return results, None
+        finally:
+            sdk.EdsTerminateSDK()
+
+    results, sdk_error = await asyncio.to_thread(_sdk_work)
+
     upload_errors: list[str] = []
     successful_cabine_ids: list[int] = []
 
-    try:
-        # Record all cameras in parallel
-        results = await record_all_cameras(
-            sdk, cameras, RECORD_DURATION, raw_dir,
-            prep_delay=RECORD_PREP_DELAY,
-            start_settle=RECORD_START_SETTLE,
-        )
+    if sdk_error:
+        logger.error("Session %s: %s", session_id, sdk_error)
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{API_BASE_URL}/agent/sessions/{session_id}/complete",
+                json={"status": "error", "detail": sdk_error},
+                headers=HEADERS,
+                timeout=10,
+            )
+        shutil.rmtree(work_dir, ignore_errors=True)
+        return
 
+    try:
         errors = []
         for cabine_id, result in results.items():
             if isinstance(result, Exception):
@@ -144,11 +159,10 @@ async def handle_record(sdk, cameras: list, session_id: str):
                     errors.append(f"cabine {cabine_id}: vídeo de saída vazio ou ausente")
                     continue
 
-                # Upload with retry — only delete raw AFTER confirmed upload
                 from src.s3_upload import upload_video
                 try:
                     url = await _upload_with_retry(upload_video, out_path, session_id, cabine_id)
-                    raw_path.unlink(missing_ok=True)  # safe to delete now
+                    raw_path.unlink(missing_ok=True)
                     successful_cabine_ids.append(cabine_id)
                     logger.info("cabine %d disponível em %s", cabine_id, url)
                 except Exception as exc:
@@ -157,9 +171,6 @@ async def handle_record(sdk, cameras: list, session_id: str):
 
             except Exception as exc:
                 errors.append(f"cabine {cabine_id} ffmpeg: {exc}")
-
-        if not results:
-            errors.append("nenhuma câmera gravou")
 
         async with httpx.AsyncClient() as client:
             if errors and not successful_cabine_ids:
@@ -235,7 +246,7 @@ async def poll_loop(sdk, cameras):
                         await _ack_session(session_id)
                         try:
                             await asyncio.wait_for(
-                                handle_record(sdk, cameras, session_id),
+                                handle_record(session_id),
                                 timeout=HANDLE_TIMEOUT,
                             )
                         except asyncio.TimeoutError:
@@ -343,33 +354,15 @@ def main():
         logger.info("[AGENT] Este processo executa UMA sessão e encerra.")
         logger.info("=" * 60)
 
-        logger.info("[AGENT] Inicializando SDK e detectando câmeras...")
-        sdk, cameras = _load_cameras()
-
-        if not cameras:
-            logger.error("[AGENT] Nenhuma câmera pronta. Encerrando com erro (código 1).")
-            sdk.EdsTerminateSDK()
-            sys.exit(1)
-
-        logger.info("[AGENT] %d câmera(s) prontas. Iniciando gravação da sessão %s...", len(cameras), session_id)
+        # handle_record gerencia SDK internamente (detect + gravar + download em uma thread)
         exit_code = 0
         try:
-            asyncio.run(handle_record(sdk, cameras, session_id))
-            logger.info("[AGENT] Sessão %s concluída com sucesso.", session_id)
+            asyncio.run(handle_record(session_id))
+            logger.info("[AGENT] Sessão %s concluída.", session_id)
         except Exception as exc:
             logger.error("[AGENT] Sessão %s falhou: %s", session_id, exc)
             exit_code = 1
-        finally:
-            logger.info("[AGENT] Liberando recursos EDSDK...")
-            for _, cam_ref in cameras:
-                try:
-                    sdk.EdsCloseSession(cam_ref)
-                    sdk.EdsRelease(cam_ref)
-                except Exception:
-                    pass
-            sdk.EdsTerminateSDK()
-            logger.info("[AGENT] SDK terminado. Processo encerrando (código %d).", exit_code)
-
+        logger.info("[AGENT] Processo encerrando (código %d).", exit_code)
         sys.exit(exit_code)
 
     # ── Modo poll_loop: loop eterno (uso standalone sem runner) ───────────────
