@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { SessionSummary, GalleryVideo } from "@/lib/api";
 import { VideoCard } from "./VideoCard";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8001";
 
 interface VideoEntry {
   session: SessionSummary;
@@ -68,7 +67,7 @@ export function GalleryClient({ initialSessions, initialHasMore }: GalleryClient
     setLoading(true);
     try {
       const nextPage = page + 1;
-      const res = await fetch(`${API_BASE}/sessions?page=${nextPage}&limit=20`, { cache: "no-store" });
+      const res = await fetch(`/sessions?page=${nextPage}&limit=20`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       setSessions(prev => [...prev, ...(data.sessions || [])]);
