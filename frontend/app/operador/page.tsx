@@ -7,7 +7,7 @@ import { startSession, getGallery } from "@/lib/api";
 type Phase = "idle" | "countdown" | "recording" | "processing" | "error";
 
 const PRE_SECONDS = 3;    // contagem de preparação (3-2-1) enquanto o agente inicializa as câmeras
-const RECORD_SECONDS = 5; // contagem de gravação (deve bater com RECORD_DURATION do agente)
+const RECORD_SECONDS = 3; // contagem de gravação (deve bater com RECORD_DURATION do agente)
 
 // ─── inline SVG camera ────────────────────────────────────────────────────────
 function CameraIcon({ active, size = "md" }: { active?: boolean; size?: "sm" | "md" }) {

@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 API_BASE_URL     = os.environ["API_BASE_URL"].rstrip("/")
 AGENT_TOKEN      = os.environ["AGENT_TOKEN"]
 FFMPEG_PATH      = os.environ.get("FFMPEG_PATH", "ffmpeg")
-RECORD_DURATION  = float(os.environ.get("RECORD_DURATION", "5.0"))
+RECORD_DURATION  = float(os.environ.get("RECORD_DURATION", "3.0"))
 RECORD_PREP_DELAY = float(os.environ.get("RECORD_PREP_DELAY", "4.0"))
 RECORD_START_SETTLE = float(os.environ.get("RECORD_START_SETTLE", "3.5"))
-VIDEO_SPEED      = float(os.environ.get("VIDEO_SPEED", "0.75"))
+VIDEO_SPEED      = float(os.environ.get("VIDEO_SPEED", "0.30"))
 RAW_DIR          = Path(os.environ.get("RAW_DIR", "./processed"))
 HANDLE_TIMEOUT   = float(os.environ.get("HANDLE_TIMEOUT", "180.0"))  # seconds
 S3_UPLOAD_RETRIES = int(os.environ.get("S3_UPLOAD_RETRIES", "3"))
@@ -151,8 +151,8 @@ async def handle_record(session_id: str):
             try:
                 await process_video(
                     raw_path, out_path, FFMPEG_PATH, VIDEO_SPEED,
-                    vflip=(cabine_id in (1, 3)),
-                    hflip=(cabine_id in (1, 3)),
+                    vflip=(cabine_id == 3),
+                    hflip=(cabine_id == 3),
                 )
 
                 if not out_path.exists() or out_path.stat().st_size == 0:
@@ -330,7 +330,7 @@ async def smoke_test():
             continue
         mp4_path = raw_dir / f"cabine_{cabine_id}.mp4"
         try:
-            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id in (1, 3)), hflip=(cabine_id in (1, 3)))
+            await process_video(result, mp4_path, FFMPEG_PATH, VIDEO_SPEED, vflip=(cabine_id == 3), hflip=(cabine_id == 3))
         except Exception as exc:
             logger.error("cabine %d: falha ao gerar MP4: %s", cabine_id, exc)
 
