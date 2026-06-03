@@ -1,6 +1,6 @@
 import asyncio, base64, io, json, os, uuid, logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -465,3 +465,71 @@ async def serve_video(session_id: str, filename: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
     return FileResponse(str(path), media_type="video/mp4")
+
+
+# ── Admin dashboard stats ─────────────────────────────────────────────────────
+
+@app.get("/admin/stats")
+async def admin_stats(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(SessionModel))
+    sessions = result.scalars().all()
+
+    SP_OFFSET = timedelta(hours=-3)  # UTC-3 Sao Paulo
+    now_utc = datetime.utcnow()
+    now_sp = now_utc + SP_OFFSET
+    today_sp_midnight_utc = datetime(now_sp.year, now_sp.month, now_sp.day) - SP_OFFSET
+
+    def is_today(s: SessionModel) -> bool:
+        return bool(s.created_at and s.created_at >= today_sp_midnight_utc)
+
+    ready = [s for s in sessions if s.status == "ready"]
+    ready_today = [s for s in ready if is_today(s)]
+    recording_now = [s for s in sessions if s.status == "recording"]
+    error_sessions = [s for s in sessions if s.status == "error"]
+
+    total_videos = sum(len(s.cabine_ids_list) for s in ready)
+    videos_today = sum(len(s.cabine_ids_list) for s in ready_today)
+    participants_today = sum(len(s.participants_list) for s in ready_today)
+
+    total_count = len(ready) + len(error_sessions)
+    success_rate = round(len(ready) / total_count * 100) if total_count > 0 else 100
+
+    # Sessions per hour — last 12h, labeled in SP time
+    sessions_per_hour = []
+    for i in range(12):
+        hour_start = (now_utc - timedelta(hours=11 - i)).replace(minute=0, second=0, microsecond=0)
+        hour_end = hour_start + timedelta(hours=1)
+        label = (hour_start + SP_OFFSET).strftime("%H:%M")
+        count = sum(
+            1 for s in ready
+            if s.created_at and hour_start <= s.created_at < hour_end
+        )
+        sessions_per_hour.append({"hour": label, "count": count})
+
+    # Last 10 sessions (any status), most recent first
+    recent = sorted(sessions, key=lambda x: x.created_at or datetime.min, reverse=True)[:10]
+    recent_list = [
+        {
+            "session_id": s.session_id,
+            "operator_name": s.operator_name,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "status": s.status,
+            "video_count": len(s.cabine_ids_list),
+            "participant_count": len(s.participants_list),
+        }
+        for s in recent
+    ]
+
+    return {
+        "sessions_today": len(ready_today),
+        "videos_today": videos_today,
+        "participants_today": participants_today,
+        "total_sessions": len(ready),
+        "total_videos": total_videos,
+        "recording_now": len(recording_now),
+        "error_count": len(error_sessions),
+        "success_rate": success_rate,
+        "sessions_per_hour": sessions_per_hour,
+        "recent_sessions": recent_list,
+        "updated_at": now_utc.isoformat() + "Z",
+    }

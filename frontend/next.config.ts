@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
       { source: "/sessions",         destination: `${BACKEND}/sessions`          },
       { source: "/buscar-video",     destination: `${BACKEND}/buscar-video`      },
       { source: "/meu-video/:path*", destination: `${BACKEND}/meu-video/:path*`  },
+      { source: "/admin/stats",      destination: `${BACKEND}/admin/stats`        },
     ];
   },
 };
