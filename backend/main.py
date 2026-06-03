@@ -471,10 +471,15 @@ async def serve_video(session_id: str, filename: str):
 
 @app.get("/admin/stats")
 async def admin_stats(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SessionModel))
+    SP_OFFSET = timedelta(hours=-3)  # UTC-3 Sao Paulo
+    # Event start: 2026-06-02 00:00 SP = 2026-06-02 03:00 UTC
+    EVENT_START_UTC = datetime(2026, 6, 2, 3, 0, 0)
+
+    result = await db.execute(
+        select(SessionModel).where(SessionModel.created_at >= EVENT_START_UTC)
+    )
     sessions = result.scalars().all()
 
-    SP_OFFSET = timedelta(hours=-3)  # UTC-3 Sao Paulo
     now_utc = datetime.utcnow()
     now_sp = now_utc + SP_OFFSET
     today_sp_midnight_utc = datetime(now_sp.year, now_sp.month, now_sp.day) - SP_OFFSET
@@ -485,14 +490,9 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
     ready = [s for s in sessions if s.status == "ready"]
     ready_today = [s for s in ready if is_today(s)]
     recording_now = [s for s in sessions if s.status == "recording"]
-    error_sessions = [s for s in sessions if s.status == "error"]
 
     total_videos = sum(len(s.cabine_ids_list) for s in ready)
     videos_today = sum(len(s.cabine_ids_list) for s in ready_today)
-    participants_today = sum(len(s.participants_list) for s in ready_today)
-
-    total_count = len(ready) + len(error_sessions)
-    success_rate = round(len(ready) / total_count * 100) if total_count > 0 else 100
 
     # Sessions per hour — last 12h, labeled in SP time
     sessions_per_hour = []
@@ -523,12 +523,9 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
     return {
         "sessions_today": len(ready_today),
         "videos_today": videos_today,
-        "participants_today": participants_today,
         "total_sessions": len(ready),
         "total_videos": total_videos,
         "recording_now": len(recording_now),
-        "error_count": len(error_sessions),
-        "success_rate": success_rate,
         "sessions_per_hour": sessions_per_hour,
         "recent_sessions": recent_list,
         "updated_at": now_utc.isoformat() + "Z",
