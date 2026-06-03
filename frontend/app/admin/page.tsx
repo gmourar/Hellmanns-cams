@@ -19,12 +19,9 @@ interface RecentSession {
 interface AdminStats {
   sessions_today: number;
   videos_today: number;
-  participants_today: number;
   total_sessions: number;
   total_videos: number;
   recording_now: number;
-  error_count: number;
-  success_rate: number;
   sessions_per_hour: HourBucket[];
   recent_sessions: RecentSession[];
   updated_at: string;
@@ -142,7 +139,7 @@ export default function AdminPage() {
         )}
 
         {/* ── Stat cards ── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <StatCard
             label="Sessões hoje"
             value={stats?.sessions_today ?? "—"}
@@ -154,20 +151,6 @@ export default function AdminPage() {
             value={stats?.videos_today ?? "—"}
             sub={`${stats?.total_videos ?? 0} no total`}
             accent="#FFD200"
-          />
-          <StatCard
-            label="Participantes"
-            value={stats?.participants_today ?? "—"}
-            sub="capturados hoje"
-            accent="#4ade80"
-          />
-          <StatCard
-            label="Taxa de sucesso"
-            value={stats ? `${stats.success_rate}%` : "—"}
-            sub={`${stats?.error_count ?? 0} erro(s) total`}
-            accent={
-              stats && stats.success_rate < 80 ? "#f87171" : "#4ade80"
-            }
           />
         </div>
 
