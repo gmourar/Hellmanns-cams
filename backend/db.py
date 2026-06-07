@@ -1,5 +1,5 @@
 import json, os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -24,7 +24,7 @@ class Session(Base):
     operator_name   = Column(String, nullable=False)
     participants    = Column(Text, nullable=False)   # JSON list
     status          = Column(String, nullable=False, default="recording")
-    created_at      = Column(DateTime, default=datetime.utcnow)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     indexing_status = Column(String, default="pending")  # pending | indexing | indexed | error
     indexed_at      = Column(DateTime, nullable=True)
     indexing_error  = Column(Text, nullable=True)

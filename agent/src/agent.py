@@ -276,7 +276,7 @@ async def poll_loop(sdk, cameras):
 
 
 async def smoke_test():
-    from src.camera import load_sdk, list_connected_cameras, detect_cameras, record_all_cameras
+    from src.camera import load_sdk, list_connected_cameras, detect_cameras, record_all_cameras_sync
 
     sdk = load_sdk()
     sdk.EdsInitializeSDK()
@@ -311,10 +311,11 @@ async def smoke_test():
     logger.info("EDSDK: %d câmera(s) prontas para gravação", len(cameras))
 
     raw_dir = RAW_DIR / "smoke_test"
-    results = await record_all_cameras(
+    results = await asyncio.to_thread(
+        record_all_cameras_sync,
         sdk, cameras, RECORD_DURATION, raw_dir,
-        prep_delay=RECORD_PREP_DELAY,
-        start_settle=RECORD_START_SETTLE,
+        RECORD_PREP_DELAY,
+        RECORD_START_SETTLE,
     )
 
     ok_count = sum(1 for v in results.values() if not isinstance(v, Exception))

@@ -12,9 +12,12 @@ FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
 FFMPEG_CRF = os.environ.get("FFMPEG_CRF", "24")
 
 # Moldura PNG com transparência — sobreposta ao vídeo processado.
-# Padrão: moldura_transparente.png na raiz do projeto (um nível acima de agent/).
-_default_overlay = str(Path(__file__).parent.parent.parent / "moldura_ativacao_squeeze+bolinha_V008 (1).png")
+_default_overlay = str(Path(__file__).parent.parent.parent / "moldura_blur_03.png")
 OVERLAY_PATH = os.environ.get("OVERLAY_PATH", _default_overlay)
+
+# Trilha sonora — substitui o áudio da câmera. Deixe vazio para manter áudio original.
+_default_soundtrack = str(Path(__file__).parent.parent.parent / "30s-Ariel-Shalom-Night-Ride-_mp3cut.net_.mp3.mp3")
+SOUNDTRACK_PATH = os.environ.get("SOUNDTRACK_PATH", _default_soundtrack)
 
 
 def get_duration(path: Path) -> float:
@@ -69,9 +72,10 @@ async def process_video(
     Async wrapper around FFmpeg pipeline:
     - Apply playback speed to the full clip
     - Transpose (rotate 90° for vertical mount) + crop to 9:16
-    - Optional flip: vflip=True (câmera virada para baixo), hflip=True (espelhada).
-      vflip+hflip juntos = rotação 180° (câmera montada de ponta-cabeça E invertida).
-    - Overlay moldura PNG on top (alpha blending) if OVERLAY_PATH exists
+    - Optional flip: vflip+hflip = 180° rotation
+    - Overlay moldura PNG (alpha blending) if OVERLAY_PATH exists
+    - Replace camera audio with SOUNDTRACK_PATH (trimmed to video length).
+      Falls back to slowed original audio if soundtrack not found.
     - Encode H.264 + AAC
     Returns output path.
     """
@@ -79,7 +83,6 @@ async def process_video(
     if video_speed <= 0:
         raise ValueError("video_speed must be greater than zero")
 
-    atempo = _atempo_chain(video_speed)
     pts_multiplier = 1.0 / video_speed
     portrait = _portrait_filter()
     flip = ("vflip," if vflip else "") + ("hflip," if hflip else "")
@@ -88,42 +91,65 @@ async def process_video(
     overlay_file = Path(OVERLAY_PATH) if OVERLAY_PATH else None
     use_overlay = bool(overlay_file and overlay_file.exists())
 
+    soundtrack_file = Path(SOUNDTRACK_PATH) if SOUNDTRACK_PATH else None
+    use_soundtrack = bool(soundtrack_file and soundtrack_file.exists())
+
+    if not use_overlay and OVERLAY_PATH:
+        logger.warning("Moldura não encontrada em %s — sem overlay", OVERLAY_PATH)
+    if not use_soundtrack and SOUNDTRACK_PATH:
+        logger.warning("Trilha não encontrada em %s — usando áudio original", SOUNDTRACK_PATH)
+
+    # ── Build inputs list ──────────────────────────────────────────────────────
+    inputs: list[str] = ["-i", str(raw_video)]
+    if use_overlay:
+        inputs += ["-i", str(overlay_file)]
+    if use_soundtrack:
+        inputs += ["-i", str(soundtrack_file)]
+
+    # ── Index each input stream ────────────────────────────────────────────────
+    overlay_idx = 1 if use_overlay else None
+    soundtrack_idx = (2 if use_overlay else 1) if use_soundtrack else None
+
+    # ── Video filter_complex ───────────────────────────────────────────────────
     if use_overlay:
         logger.info("Aplicando moldura: %s", overlay_file)
-        filter_complex = (
+        video_filters = (
             f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[vid];"
-            f"[1:v]scale={w}:{h}[frame];"
-            f"[vid][frame]overlay=0:0:format=auto[outv];"
-            f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
+            f"[{overlay_idx}:v]scale={w}:{h}[frame];"
+            f"[vid][frame]overlay=0:0:format=auto[outv]"
         )
-        cmd = [
-            ffmpeg_path, "-y", "-noautorotate",
-            "-i", str(raw_video),
-            "-i", str(overlay_file),
-            "-filter_complex", filter_complex,
-            "-map", "[outv]", "-map", "[outa]",
-            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(output),
-        ]
     else:
-        if OVERLAY_PATH:
-            logger.warning("Moldura não encontrada em %s — processando sem overlay", OVERLAY_PATH)
-        filter_complex = (
-            f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[outv];"
-            f"[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
+        video_filters = (
+            f"[0:v]setpts={pts_multiplier:.6f}*(PTS-STARTPTS),{flip}{portrait}[outv]"
         )
-        cmd = [
-            ffmpeg_path, "-y", "-noautorotate",
-            "-i", str(raw_video),
-            "-filter_complex", filter_complex,
-            "-map", "[outv]", "-map", "[outa]",
-            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(output),
-        ]
+
+    # ── Audio mapping ──────────────────────────────────────────────────────────
+    if use_soundtrack:
+        # Soundtrack plays at normal speed; -shortest trims it when video ends
+        audio_map = ["-map", f"{soundtrack_idx}:a"]
+        extra_flags = ["-shortest"]
+        filter_complex = video_filters
+    else:
+        # Fall back: slow down original camera audio
+        atempo = _atempo_chain(video_speed)
+        filter_complex = (
+            video_filters
+            + f";[0:a]asetpts=PTS-STARTPTS,{atempo}[outa]"
+        )
+        audio_map = ["-map", "[outa]"]
+        extra_flags = []
+
+    cmd = [
+        ffmpeg_path, "-y", "-noautorotate",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]", *audio_map,
+        "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", FFMPEG_CRF,
+        "-c:a", "aac", "-b:a", "128k",
+        *extra_flags,
+        "-movflags", "+faststart",
+        str(output),
+    ]
 
     logger.info("FFmpeg processing: %s → %s", raw_video.name, output.name)
     proc = await asyncio.create_subprocess_exec(

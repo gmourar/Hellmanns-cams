@@ -1,6 +1,6 @@
 import asyncio, base64, io, json, os, uuid, logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -144,7 +144,7 @@ async def create_session(
         operator_name=body.operator_name,
         participants=json.dumps(body.participants),
         status="recording",
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(session)
     await db.commit()
@@ -168,7 +168,7 @@ async def agent_ack(
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    session.agent_acked_at = datetime.utcnow()
+    session.agent_acked_at = datetime.now(timezone.utc)
     await db.commit()
     return {"ok": True}
 
@@ -263,7 +263,7 @@ async def gallery(session_id: str, db: AsyncSession = Depends(get_db)):
         "video_urls": [video.video_url for video in videos],
         "status": session.status,
         "indexing_status": session.indexing_status or "pending",
-        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "created_at": (session.created_at.isoformat() + "Z") if session.created_at else None,
     }
 
 
@@ -435,7 +435,7 @@ async def list_sessions(
             "session_id": session.session_id,
             "operator_name": session.operator_name,
             "participants": session.participants_list,
-            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "created_at": (session.created_at.isoformat() + "Z") if session.created_at else None,
             "indexing_status": session.indexing_status or "pending",
             "videos": videos,
         })
@@ -512,7 +512,7 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         {
             "session_id": s.session_id,
             "operator_name": s.operator_name,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "created_at": (s.created_at.isoformat() + "Z") if s.created_at else None,
             "status": s.status,
             "video_count": len(s.cabine_ids_list),
             "participant_count": len(s.participants_list),
