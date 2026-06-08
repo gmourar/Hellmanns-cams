@@ -8,7 +8,9 @@
       "Bash(python -c ':*)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/agent.py'\\).read\\(\\)\\); print\\('agent.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/camera.py'\\).read\\(\\)\\); print\\('camera.py OK'\\)\")",
-      "Bash(python -c \"import sys; print\\(sys.executable\\)\")"
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Read(//home/ec2-user/hellmanns/**)",
+      "Read(//home/ec2-user/**)"
     ]
   }
 }

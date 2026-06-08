@@ -94,7 +94,7 @@ export default async function GaleriaPage({
 
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={`${process.env.NEXT_PUBLIC_API_BASE}/meu-video/qr.svg`}
+            src="/qrcode-meu-video.svg"
             alt="QR Code para encontrar seu vídeo"
             className="w-52 h-52 bg-white rounded-2xl p-3 shadow-[0_0_40px_rgba(255,210,0,0.15)]"
           />
