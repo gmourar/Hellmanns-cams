@@ -7,6 +7,12 @@ interface HourBucket {
   count: number;
 }
 
+interface DayBucket {
+  day: string;
+  videos: number;
+  sessions: number;
+}
+
 interface RecentSession {
   session_id: string;
   operator_name: string;
@@ -23,6 +29,7 @@ interface AdminStats {
   total_videos: number;
   recording_now: number;
   sessions_per_hour: HourBucket[];
+  videos_per_day: DayBucket[];
   recent_sessions: RecentSession[];
   updated_at: string;
 }
@@ -66,6 +73,10 @@ export default function AdminPage() {
 
   const maxH = stats
     ? Math.max(...stats.sessions_per_hour.map((h) => h.count), 1)
+    : 1;
+
+  const maxV = stats
+    ? Math.max(...stats.videos_per_day.map((d) => d.videos), 1)
     : 1;
 
   return (
@@ -191,6 +202,56 @@ export default function AdminPage() {
             </div>
           ) : (
             <div className="h-28 flex items-center justify-center">
+              <div className="w-6 h-6 rounded-full border-2 border-white/10 border-t-white/30 animate-spin" />
+            </div>
+          )}
+        </section>
+
+        {/* ── Videos per day chart ── */}
+        <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-5">
+          <h2 className="font-display text-[#FFD200] tracking-[0.2em] text-xs uppercase mb-5">
+            Vídeos por dia · últimos 7 dias · horário SP
+          </h2>
+
+          {stats ? (
+            <div className="flex items-end gap-2 h-36">
+              {stats.videos_per_day.map(({ day, videos, sessions }) => (
+                <div
+                  key={day}
+                  className="flex-1 flex flex-col items-center gap-1 min-w-0"
+                >
+                  <span className="text-[9px] text-white/50 tabular-nums h-3 leading-3">
+                    {videos > 0 ? videos : ""}
+                  </span>
+                  <div className="w-full flex flex-col-reverse gap-px">
+                    <div
+                      className="w-full rounded-t-sm transition-all duration-500"
+                      title={`${videos} vídeo${videos !== 1 ? "s" : ""} · ${sessions} sessão`}
+                      style={{
+                        height:
+                          videos > 0
+                            ? `${Math.max(4, (videos / maxV) * 88)}px`
+                            : "2px",
+                        backgroundColor:
+                          videos > 0
+                            ? "rgba(255,210,0,0.70)"
+                            : "rgba(255,255,255,0.06)",
+                      }}
+                    />
+                  </div>
+                  <span className="text-[9px] text-white/30 truncate w-full text-center leading-3">
+                    {day}
+                  </span>
+                  {sessions > 0 && (
+                    <span className="text-[8px] text-white/20 leading-3">
+                      {sessions}s
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="h-36 flex items-center justify-center">
               <div className="w-6 h-6 rounded-full border-2 border-white/10 border-t-white/30 animate-spin" />
             </div>
           )}

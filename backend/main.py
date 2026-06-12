@@ -506,6 +506,22 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         )
         sessions_per_hour.append({"hour": label, "count": count})
 
+    # Videos per day — last 7 days, labeled in SP time
+    videos_per_day = []
+    for i in range(7):
+        day_sp = now_sp.date() - timedelta(days=6 - i)
+        day_start_utc = datetime(day_sp.year, day_sp.month, day_sp.day) - SP_OFFSET
+        day_end_utc = day_start_utc + timedelta(days=1)
+        day_sessions = [
+            s for s in ready
+            if s.created_at and day_start_utc <= s.created_at < day_end_utc
+        ]
+        videos_per_day.append({
+            "day": day_sp.strftime("%d/%m"),
+            "videos": sum(len(s.cabine_ids_list) for s in day_sessions),
+            "sessions": len(day_sessions),
+        })
+
     # Last 10 sessions (any status), most recent first
     recent = sorted(sessions, key=lambda x: x.created_at or datetime.min, reverse=True)[:10]
     recent_list = [
@@ -527,6 +543,7 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         "total_videos": total_videos,
         "recording_now": len(recording_now),
         "sessions_per_hour": sessions_per_hour,
+        "videos_per_day": videos_per_day,
         "recent_sessions": recent_list,
         "updated_at": now_utc.isoformat() + "Z",
     }
