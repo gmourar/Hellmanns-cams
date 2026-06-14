@@ -494,10 +494,10 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
     total_videos = sum(len(s.cabine_ids_list) for s in ready)
     videos_today = sum(len(s.cabine_ids_list) for s in ready_today)
 
-    # Sessions per hour — last 12h, labeled in SP time
+    # Sessions per hour — last 24h, labeled in SP time
     sessions_per_hour = []
-    for i in range(12):
-        hour_start = (now_utc - timedelta(hours=11 - i)).replace(minute=0, second=0, microsecond=0)
+    for i in range(24):
+        hour_start = (now_utc - timedelta(hours=23 - i)).replace(minute=0, second=0, microsecond=0)
         hour_end = hour_start + timedelta(hours=1)
         label = (hour_start + SP_OFFSET).strftime("%H:%M")
         count = sum(

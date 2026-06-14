@@ -168,17 +168,17 @@ export default function AdminPage() {
         {/* ── Sessions per hour chart ── */}
         <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-5">
           <h2 className="font-display text-[#FFD200] tracking-[0.2em] text-xs uppercase mb-5">
-            Sessões por hora · últimas 12h · horário SP
+            Sessões por hora · últimas 24h · horário SP
           </h2>
 
           {stats ? (
-            <div className="flex items-end gap-1 h-28">
-              {stats.sessions_per_hour.map(({ hour, count }) => (
+            <div className="flex items-end gap-px h-28">
+              {stats.sessions_per_hour.map(({ hour, count }, idx) => (
                 <div
                   key={hour}
                   className="flex-1 flex flex-col items-center gap-1 min-w-0"
                 >
-                  <span className="text-[9px] text-white/50 tabular-nums h-3 leading-3">
+                  <span className="text-[8px] text-white/50 tabular-nums h-3 leading-3">
                     {count > 0 ? count : ""}
                   </span>
                   <div
@@ -195,7 +195,7 @@ export default function AdminPage() {
                     }}
                   />
                   <span className="text-[8px] text-white/20 truncate w-full text-center leading-3">
-                    {hour}
+                    {idx % 4 === 0 ? hour : ""}
                   </span>
                 </div>
               ))}
