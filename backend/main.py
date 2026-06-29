@@ -467,6 +467,152 @@ async def serve_video(session_id: str, filename: str):
     return FileResponse(str(path), media_type="video/mp4")
 
 
+# ── Admin report (all-time, per day) ─────────────────────────────────────────
+
+@app.get("/admin/report")
+async def admin_report(db: AsyncSession = Depends(get_db)):
+    """Retorna participantes e sessões agrupados por dia — sem filtro de data."""
+    SP_OFFSET = timedelta(hours=-3)
+    result = await db.execute(select(SessionModel).order_by(SessionModel.created_at))
+    sessions = result.scalars().all()
+
+    from collections import defaultdict
+    by_day: dict = defaultdict(lambda: {"sessoes": 0, "participantes": 0})
+    for s in sessions:
+        if s.created_at is None:
+            continue
+        sp_dt = s.created_at + SP_OFFSET
+        day = sp_dt.strftime("%Y-%m-%d")
+        by_day[day]["sessoes"] += 1
+        by_day[day]["participantes"] += len(s.participants_list)
+
+    rows = [
+        {"data": d, "sessoes": v["sessoes"], "participantes": v["participantes"]}
+        for d, v in sorted(by_day.items())
+    ]
+    total_sessoes = sum(r["sessoes"] for r in rows)
+    total_partic  = sum(r["participantes"] for r in rows)
+    return {
+        "dias": rows,
+        "total_sessoes": total_sessoes,
+        "total_participantes": total_partic,
+        "gerado_em": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/admin/report/excel")
+async def admin_report_excel(db: AsyncSession = Depends(get_db)):
+    """Gera e retorna o relatório Excel para download."""
+    import io as _io
+    from collections import defaultdict
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    SP_OFFSET = timedelta(hours=-3)
+    DAYS_PT = {0:"Segunda",1:"Terça",2:"Quarta",3:"Quinta",4:"Sexta",5:"Sábado",6:"Domingo"}
+
+    result = await db.execute(select(SessionModel).order_by(SessionModel.created_at))
+    sessions = result.scalars().all()
+
+    by_day: dict = defaultdict(lambda: {"sessoes": 0, "participantes": 0})
+    for s in sessions:
+        if s.created_at is None:
+            continue
+        sp_dt = s.created_at + SP_OFFSET
+        day = sp_dt.strftime("%Y-%m-%d")
+        by_day[day]["sessoes"] += 1
+        by_day[day]["participantes"] += len(s.participants_list)
+
+    YELLOW, BLACK, WHITE, LIGHT, GRAY = "FFDD00", "1A1A1A", "FFFFFF", "FFF9CC", "F5F5F5"
+
+    def bthin():
+        s = Side(style="thin", color="CCCCCC")
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    def bmed():
+        s = Side(style="medium", color=BLACK)
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Participantes por Dia"
+
+    ws.merge_cells("A1:D1")
+    c = ws["A1"]
+    c.value = "Hellmann's — Ativação Fotográfica"
+    c.font = Font(name="Calibri", bold=True, size=14, color=WHITE)
+    c.fill = PatternFill("solid", fgColor=BLACK)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 32
+
+    ws.merge_cells("A2:D2")
+    c = ws["A2"]
+    c.value = f"Relatório gerado em {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC"
+    c.font = Font(name="Calibri", size=10, color="666666")
+    c.fill = PatternFill("solid", fgColor=GRAY)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 8
+
+    for col, h in enumerate(["Data", "Dia da Semana", "Sessões Realizadas", "Participantes"], 1):
+        c = ws.cell(row=4, column=col, value=h)
+        c.font = Font(name="Calibri", bold=True, size=11, color=BLACK)
+        c.fill = PatternFill("solid", fgColor=YELLOW)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = bthin()
+    ws.row_dimensions[4].height = 22
+
+    sorted_days = sorted(by_day.items())
+    for i, (day, v) in enumerate(sorted_days):
+        row = 5 + i
+        dt = datetime.strptime(day, "%Y-%m-%d")
+        fill = PatternFill("solid", fgColor=LIGHT if i % 2 == 0 else WHITE)
+        for col, val in enumerate([
+            dt.strftime("%d/%m/%Y"),
+            DAYS_PT[dt.weekday()],
+            v["sessoes"],
+            v["participantes"],
+        ], 1):
+            c = ws.cell(row=row, column=col, value=val)
+            c.font = Font(name="Calibri", size=11)
+            c.fill = fill
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = bthin()
+        ws.row_dimensions[row].height = 20
+
+    tr = 5 + len(sorted_days)
+    ws.row_dimensions[tr].height = 22
+    for col, val in [(1, "TOTAL"), (2, f"{len(sorted_days)} dias")]:
+        c = ws.cell(row=tr, column=col, value=val)
+        c.font = Font(name="Calibri", bold=True, size=11, color=WHITE)
+        c.fill = PatternFill("solid", fgColor=BLACK)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = bthin()
+    for col, val in [(3, sum(v["sessoes"] for v in by_day.values())),
+                     (4, sum(v["participantes"] for v in by_day.values()))]:
+        c = ws.cell(row=tr, column=col, value=val)
+        c.font = Font(name="Calibri", bold=True, size=12, color=BLACK)
+        c.fill = PatternFill("solid", fgColor=YELLOW)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = bmed()
+
+    ws.column_dimensions["A"].width = 15
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 20
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"participantes-{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
+    return Response(
+        content=buf.read(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── Admin dashboard stats ─────────────────────────────────────────────────────
 
 @app.get("/admin/stats")

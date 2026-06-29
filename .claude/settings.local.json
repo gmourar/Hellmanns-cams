@@ -10,7 +10,10 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/camera.py'\\).read\\(\\)\\); print\\('camera.py OK'\\)\")",
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
       "Read(//home/ec2-user/hellmanns/**)",
-      "Read(//home/ec2-user/**)"
+      "Read(//home/ec2-user/**)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -c \"import openpyxl; print\\('openpyxl ok'\\)\")",
+      "Bash(python3 -c \"import xlsxwriter; print\\('xlsxwriter ok'\\)\")"
     ]
   }
 }
