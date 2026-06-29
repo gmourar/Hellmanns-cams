@@ -471,57 +471,68 @@ async def serve_video(session_id: str, filename: str):
 
 @app.get("/admin/report")
 async def admin_report(db: AsyncSession = Depends(get_db)):
-    """Retorna participantes e sessões agrupados por dia — sem filtro de data."""
+    """Retorna sessões e vídeos agrupados por dia — a partir de 03/06/2026 (SP)."""
     SP_OFFSET = timedelta(hours=-3)
-    result = await db.execute(select(SessionModel).order_by(SessionModel.created_at))
+    EVENT_START_UTC = datetime(2026, 6, 3, 3, 0, 0)  # 03/06 00:00 SP = 03:00 UTC
+
+    result = await db.execute(
+        select(SessionModel)
+        .where(SessionModel.status == "ready")
+        .where(SessionModel.created_at >= EVENT_START_UTC)
+        .order_by(SessionModel.created_at)
+    )
     sessions = result.scalars().all()
 
     from collections import defaultdict
-    by_day: dict = defaultdict(lambda: {"sessoes": 0, "participantes": 0})
+    by_day: dict = defaultdict(lambda: {"sessoes": 0, "videos": 0})
     for s in sessions:
         if s.created_at is None:
             continue
         sp_dt = s.created_at + SP_OFFSET
         day = sp_dt.strftime("%Y-%m-%d")
         by_day[day]["sessoes"] += 1
-        by_day[day]["participantes"] += len(s.participants_list)
+        by_day[day]["videos"] += len(s.cabine_ids_list)
 
     rows = [
-        {"data": d, "sessoes": v["sessoes"], "participantes": v["participantes"]}
+        {"data": d, "sessoes": v["sessoes"], "videos": v["videos"]}
         for d, v in sorted(by_day.items())
     ]
-    total_sessoes = sum(r["sessoes"] for r in rows)
-    total_partic  = sum(r["participantes"] for r in rows)
     return {
         "dias": rows,
-        "total_sessoes": total_sessoes,
-        "total_participantes": total_partic,
+        "total_sessoes": sum(r["sessoes"] for r in rows),
+        "total_videos": sum(r["videos"] for r in rows),
         "gerado_em": datetime.utcnow().isoformat() + "Z",
     }
 
 
 @app.get("/admin/report/excel")
 async def admin_report_excel(db: AsyncSession = Depends(get_db)):
-    """Gera e retorna o relatório Excel para download."""
+    """Gera e retorna o relatório Excel para download — a partir de 03/06/2026 (SP)."""
     import io as _io
     from collections import defaultdict
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
     SP_OFFSET = timedelta(hours=-3)
+    EVENT_START_UTC = datetime(2026, 6, 3, 3, 0, 0)
     DAYS_PT = {0:"Segunda",1:"Terça",2:"Quarta",3:"Quinta",4:"Sexta",5:"Sábado",6:"Domingo"}
 
-    result = await db.execute(select(SessionModel).order_by(SessionModel.created_at))
+    result = await db.execute(
+        select(SessionModel)
+        .where(SessionModel.status == "ready")
+        .where(SessionModel.created_at >= EVENT_START_UTC)
+        .order_by(SessionModel.created_at)
+    )
     sessions = result.scalars().all()
 
-    by_day: dict = defaultdict(lambda: {"sessoes": 0, "participantes": 0})
+    by_day: dict = defaultdict(lambda: {"sessoes": 0, "videos": 0})
     for s in sessions:
         if s.created_at is None:
             continue
         sp_dt = s.created_at + SP_OFFSET
         day = sp_dt.strftime("%Y-%m-%d")
         by_day[day]["sessoes"] += 1
-        by_day[day]["participantes"] += len(s.participants_list)
+        by_day[day]["videos"] += len(s.cabine_ids_list)
 
     YELLOW, BLACK, WHITE, LIGHT, GRAY = "FFDD00", "1A1A1A", "FFFFFF", "FFF9CC", "F5F5F5"
 
@@ -535,7 +546,7 @@ async def admin_report_excel(db: AsyncSession = Depends(get_db)):
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Participantes por Dia"
+    ws.title = "Sessões por Dia"
 
     ws.merge_cells("A1:D1")
     c = ws["A1"]
@@ -554,7 +565,7 @@ async def admin_report_excel(db: AsyncSession = Depends(get_db)):
     ws.row_dimensions[2].height = 18
     ws.row_dimensions[3].height = 8
 
-    for col, h in enumerate(["Data", "Dia da Semana", "Sessões Realizadas", "Participantes"], 1):
+    for col, h in enumerate(["Data", "Dia da Semana", "Sessões Realizadas", "Total de Vídeos"], 1):
         c = ws.cell(row=4, column=col, value=h)
         c.font = Font(name="Calibri", bold=True, size=11, color=BLACK)
         c.fill = PatternFill("solid", fgColor=YELLOW)
@@ -571,7 +582,7 @@ async def admin_report_excel(db: AsyncSession = Depends(get_db)):
             dt.strftime("%d/%m/%Y"),
             DAYS_PT[dt.weekday()],
             v["sessoes"],
-            v["participantes"],
+            v["videos"],
         ], 1):
             c = ws.cell(row=row, column=col, value=val)
             c.font = Font(name="Calibri", size=11)
@@ -589,7 +600,7 @@ async def admin_report_excel(db: AsyncSession = Depends(get_db)):
         c.alignment = Alignment(horizontal="center", vertical="center")
         c.border = bthin()
     for col, val in [(3, sum(v["sessoes"] for v in by_day.values())),
-                     (4, sum(v["participantes"] for v in by_day.values()))]:
+                     (4, sum(v["videos"] for v in by_day.values()))]:
         c = ws.cell(row=tr, column=col, value=val)
         c.font = Font(name="Calibri", bold=True, size=12, color=BLACK)
         c.fill = PatternFill("solid", fgColor=YELLOW)
